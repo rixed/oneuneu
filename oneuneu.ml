@@ -823,6 +823,7 @@ struct
             (* For hidden neurons controller_id is the layer depth: *)
             make add_where.value Hidden (pi 0 0)) in
         sort_neurons new_neurons ;
+        Param.incr add_where ;
         Param.set neurons new_neurons ;
         rearrange_hidden_neurons ()
       in
