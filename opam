@@ -1,0 +1,16 @@
+opam-version: "1.2"
+name: "oneuneu"
+version: "0.1"
+maintainer: "Cedric Cellier <rixed-github@happyleptic.org>"
+authors: "Cedric Cellier <rixed-github@happyleptic.org>"
+homepage: "https://github.com/rixed/oneuneu"
+bug-reports: "https://github.com/rixed/oneuneu/issues"
+dev-repo: "https://github.com/rixed/oneuneu.git"
+build: [make]
+install: [make "bin_dir=%{bin}%" "lib_dir=%{lib}%/oneuneu" "install"]
+remove: ["make" "bin_dir=%{bin}%" "lib_dir=%{lib}%/oneuneu" "uninstall"]
+depends: [
+  "ocamlfind" {build}
+  "batteries" {build}
+  "ogli" {build}
+]

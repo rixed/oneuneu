@@ -1,0 +1,17 @@
+*.csv
+*.cmi
+*.annot
+*.cmo
+*.cmx
+*.cma
+*.cmxa
+*.swp
+*.o
+*.a
+*.s
+*.opt
+*.byte
+.depend
+*.save.*
+ONeuNeuConfig.ml
+oneuneu
