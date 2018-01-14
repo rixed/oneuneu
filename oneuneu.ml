@@ -1393,6 +1393,7 @@ let dataviz_layout =
   fun_of Layout.screen_width (fun screen_w -> [
     fun_of Layout.screen_height (fun screen_h -> [
       background screen_w screen_h ;
+      background_selection ;
       fun_of Layout.input_width (fun input_width -> [
         IO.render_all "Input" inputs input_width ~x:0 ~y:(screen_h - Layout.inputs_height) ~width:screen_w ~height:Layout.inputs_height ]) ;
       fun_of Layout.neural_net_height (fun neural_net_height -> [
@@ -1401,8 +1402,7 @@ let dataviz_layout =
           fun_of Layout.output_width (fun output_width -> [
             IO.render_all "Output" outputs output_width ~x:0 ~y:(screen_h - (Layout.inputs_height + neural_net_height + outputs_height)) ~width:screen_w ~height:outputs_height ;
             fun_of Layout.result_height (fun result_height -> [
-              render_results ~x:0 ~y:(screen_h - (Layout.inputs_height + neural_net_height + outputs_height + result_height)) ~width:screen_w ~height:result_height ])])])]) ;
-      background_selection ])])
+              render_results ~x:0 ~y:(screen_h - (Layout.inputs_height + neural_net_height + outputs_height + result_height)) ~width:screen_w ~height:result_height ])])])])])])
 
 let () =
   let width = 800 and height = 600 in
