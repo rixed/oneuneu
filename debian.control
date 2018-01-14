@@ -1,0 +1,8 @@
+#Source: oneuneu
+Package: oneuneu
+Version: 0.1
+Architecture: amd64
+Maintainer: rixed-github@happyleptic.org
+Depends: libgl1-mesa-glx, libx11-6, libfreetype6, libgmp10
+Description: Neural Network playground
+ Simple neural network editor.

@@ -1,12 +1,12 @@
-OCAMLC     = OCAMLPATH=$(OCAMLPATH) ocamlfind ocamlc
-OCAMLOPT   = OCAMLPATH=$(OCAMLPATH) ocamlfind ocamlopt
-OCAMLDEP   = OCAMLPATH=$(OCAMLPATH) ocamlfind ocamldep
+OCAMLC     = ocamlfind ocamlc
+OCAMLOPT   = ocamlfind ocamlopt
+OCAMLDEP   = ocamlfind ocamldep
 WARNS      = Ael-3-31-40-41-42-44-45-48
 override OCAMLOPTFLAGS += -w $(WARNS) -g -annot -O2
 override OCAMLFLAGS    += -w $(WARNS) -g -annot 
 
 .SUFFIXES: .ml .mli .cmo .cmi .cmx .cmxs .annot .opt .byte
-.PHONY: clean distclean all check dep install
+.PHONY: clean distclean all check dep install deb
 
 SOURCES = $(wildcard *.ml)
 
@@ -29,31 +29,47 @@ oneuneu: ONeuNeuConfig.cmx oneuneu.cmx
 %.annot: %.cmx
 
 clean:
-	$(RM) *.cmo *.o *.cmi .depend *.annot *.s *.cma *.cmxa
-	$(RM) ONeuNeuConfig.ml
+	$(RM) *.cmo *.cmi .depend *.annot *.s *.cma *.cmxa
+	$(RM) ONeuNeuConfig.*
+	$(RM) -r debtmp
 
 distclean: clean
-	$(RM) *.cma *.cmx *.cmxa *.cmxs *.cmi *.opt *.byte *.a oneuneu
+	$(RM) *.cma *.o *.cmx *.cmxa *.cmxs *.cmi *.opt *.byte *.a *deb oneuneu
 
 # Installation
 
-bin_dir ?= ./
-lib_dir ?= ./
+bin_dir ?= /usr/bin
+lib_dir ?= /var/lib/oneuneu
 
 ONeuNeuConfig.ml:
 	echo 'let lib_dir = "$(lib_dir)"' > $@
 
 install: oneuneu vera.ttf
-	install oneuneu $(prefix)$(bin_dir)
-	install -d $(prefix)$(lib_dir)
-	install vera.ttf $(prefix)$(lib_dir)
+	strip oneuneu
+	install -d $(DESTDIR)$(bin_dir)
+	install oneuneu $(DESTDIR)$(bin_dir)
+	install -d $(DESTDIR)$(lib_dir)
+	install vera.ttf $(DESTDIR)$(lib_dir)
 
 uninstall:
-	$(RM) $(prefix)$(bin_dir)/oneuneu
-	$(RM) $(prefix)$(lib_dir)/vera.ttf
-	rmdir $(prefix)$(lib_dir) || true
+	$(RM) $(DESTDIR)$(bin_dir)/oneuneu
+	$(RM) $(DESTDIR)$(lib_dir)/vera.ttf
+	rmdir $(DESTDIR)$(lib_dir) || true
 
 reinstall: uninstall install
+
+# Debian
+
+deb:
+	mkdir -p debtmp
+	$(MAKE) DESTDIR=debtmp bin_dir=$(bin_dir) lib_dir=$(lib_dir) install
+	chmod a+x debtmp$(bin_dir)/oneuneu
+	sudo chown root: debtmp$(bin_dir)/oneuneu
+	$(RM) -r debtmp/DEBIAN
+	mkdir debtmp/DEBIAN
+	cp debian.control debtmp/DEBIAN/control
+	dpkg --build debtmp
+	mv debtmp.deb oneuneu.0.1.deb
 
 # Dependencies
 

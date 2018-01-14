@@ -15,3 +15,5 @@
 *.save.*
 ONeuNeuConfig.ml
 oneuneu
+*.deb
+debtmp
