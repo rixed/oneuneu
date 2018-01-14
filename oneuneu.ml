@@ -1384,24 +1384,26 @@ let is_in_box_selection start stop pos =
   in_between start.(1) stop.(1) pos.(1)
 
 let background screen_w screen_h =
-  let on_drag_start pos =
-    Param.set box_selection (Some (pos, pos)) in
+  let on_drag_start shifted pos =
+    Param.set box_selection (Some (pos, pos, shifted)) in
   let on_drag stop =
     match box_selection.value with
     | None -> ()
-    | Some (start, _) ->
+    | Some (start, _, shifted) ->
       if Neuron.fold_all (fun chg neuron ->
           let orig = pi Layout.control_column_width.value
                         Layout.(screen_height.value - inputs_height - neural_net_height.value) in
           let pos = Point.Infix.(neuron.position.value +~ orig) in
           let in_selbox = is_in_box_selection start stop pos in
-          if in_selbox == neuron.selected then chg else (
+          if in_selbox = neuron.selected ||
+             shifted && neuron.selected
+          then chg else (
             neuron.selected <- in_selbox ;
             true)) false
       then (
         Param.change Neuron.neurons ;
         Param.incr Neuron.selection_generation) ;
-      Param.set box_selection (Some (start, stop)) in
+      Param.set box_selection (Some (start, stop, shifted)) in
   let on_drag_stop stop =
     on_drag stop ;
     Param.none box_selection in
@@ -1417,7 +1419,7 @@ let background screen_w screen_h =
 let background_selection =
   fun_of box_selection (function
     | None -> []
-    | Some (start, stop) ->
+    | Some (start, stop, _shifted) ->
       let x0 = K.min start.(0) stop.(0) |> K.to_int
       and y0 = K.min start.(1) stop.(1) |> K.to_int
       and x1 = K.max start.(0) stop.(0) |> K.to_int
