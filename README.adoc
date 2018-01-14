@@ -1,0 +1,120 @@
+// vim:filetype=asciidoc expandtab spell spelllang=en ts=2 sw=2
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :information_source:
+:important-caption: :heavy_exclamation_mark:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
+
+= ONeuNeu: Neural Network Playground
+:icons:
+:lang: en
+:encoding: utf-8
+
+== Why?
+
+This program was created to acquire some intuition on how various topologies
+can be trained against timeseries datasets.
+
+Anecdotally, it could also be fun to play with if you are just curious about
+neural networks.
+
+== What?
+
+On the command line the program must be given the name of a CSV file.  Two
+sample CSV files are provided (likely in +/usr/lib/oneuneu+):
+
+- +logic.csv+ with some simple logical and arithmetic operations;
+
+- +eurt.csv+ which is a real timeseries with some network metric over time.
+
+Some command line options are available to enrich the CSV with time-related
+new columns; see +--help+ for more info.
+
+The program displays some controls on the left and the neural network on the
+right, that you can edit by adding input neurons (at the top), output neurons
+(at the bottom) and hidden neurons (in between).
+
+Each input and output neuron corresponds to some input field from the CSV
+file, that you can choose manipulating the settings of each input/output.
+You have to link neurons yourself using the +Connect+ buttons that appear
+whenever you have selected some neurons. Information flows from input to
+output, layer after layer.
+
+Each time you press the +Step+ button a random line will be chosen in the CSV
+and new inputs extracted from it and copied onto the corresponding input
+neurons output (normalizing the values). Then each hidden and output neuron
+outputs will be computed and the network output will be compared to the
+actual CSV value for that field. The neural network weights will then be
+adjusted to minimize the error according to the +learning speed+ setting.
+
+If you press the +Start+ button the above process will be executed in a tight
+loop until you press the +Stop+ button.
+
+Below the network you will be shown a graph of the error, hopefully going
+down.
+
+If you select or hover a neuron then you will be shown its internal state. For
+input or output neurons you will also be given the corresponding CSV values.
+Some of this internal state can be modified, such as the transfer function or
+the actual output (useful if your neuron has no input).
+
+Then you can also save or load your topology.
+
+=== Example
+
+Let's build a simple functioning network step by step:
+
+1. Start the program with +--csv $path/logic.csv+.
+
+2. Add two inputs, one for the column +A+ and one for the column +B+.
+
+3. Then add two outputs, one for the column +A+B+ and one for the column +A-B+.
+
+4. Then add a first layer of 3 hidden neurons (select +3+ and then click +Ok+).
+
+5. Then add another layer of three neurons.
+
+6. Using the mouse select all input neurons and the first layer of hidden
+neurons, and click +Connect+.
+
+7. Then select the first and second layer of hidden neurons and click again
++Connect+.
+
+8. Select the last layer of hidden neurons and the output and connect
+them.
+
+9. Before starting the simulation, let's add a bias; and let's do it manually.
+Select the layer numbered +-1+ and add a single neuron in it.
+
+10. Then select all the hidden and output neurons (this bias neuron and every
+neurons below it) and click +Connect all+ so that the bias will be connected to
+all hidden and output neurons.
+
+11. Then select the bias neuron and set its output to +1+. Since this neuron
+has no input it will keep this value. In the future, steps 9, 10 and 11 can be
+automated using the specific +Add bias+ button.
+
+12. +Save+ your network.
+
+Then click +Start+ and wait a few minutes until the error is consistently
+below 0.001. Then +Pause+ the simulation. You can now hover the input and
+output neurons to check that these few neurons indeed have learned how to add
+and subtract simultaneously two small integers.
+
+== How?
+
+The design goal was to make it so that it's very easy to change not only
+the network topology but pretty much anything, up to what is displayed or
+how the network is trained. That's why the program is a single binary with
+the simplest architecture possible.
+
+As a downside, it's quite slow (using only one thread for everything), and is
+hardly portable, requiring OpenGL and libFreeType instead of a conventional
+web browser. Also, it looks ugly.
+
+Future improvements include better visualisations, more controls over various
+aspects of the simulation and some optimisations of the GUI to leave more CPU
+to the neurons.
+

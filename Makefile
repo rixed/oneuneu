@@ -5,12 +5,14 @@ WARNS      = Ael-3-31-40-41-42-44-45-48
 override OCAMLOPTFLAGS += -w $(WARNS) -g -annot -O2
 override OCAMLFLAGS    += -w $(WARNS) -g -annot 
 
-.SUFFIXES: .ml .mli .cmo .cmi .cmx .cmxs .annot .opt .byte
-.PHONY: clean distclean all check dep install deb
+.SUFFIXES: .ml .mli .cmo .cmi .cmx .cmxs .annot .opt .byte .html .adoc
+.PHONY: clean distclean all check dep install deb doc
 
 SOURCES = $(wildcard *.ml)
 
 all: oneuneu
+
+doc: README.html
 
 PACKAGES = batteries,ogli
 
@@ -27,6 +29,9 @@ oneuneu: ONeuNeuConfig.cmx oneuneu.cmx
 	$(OCAMLOPT) $(OCAMLOPTFLAGS) -package "$(PACKAGES)" -c $<
 
 %.annot: %.cmx
+
+%.html: %.adoc
+	asciidoc -a data-uri -a icons -a max-width=55em --theme volnitsky -o $@ $<
 
 clean:
 	$(RM) *.cmo *.cmi .depend *.annot *.s *.cma *.cmxa
