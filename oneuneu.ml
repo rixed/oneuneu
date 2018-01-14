@@ -575,6 +575,23 @@ struct
   (* This changes whenever the selection changes *)
   let selection_generation = Param.make "selection generation" 0
 
+  (* Also track if we have selected only one neuron: *)
+  let selected = Param.make "selected neuron" None
+  let () =
+    Param.on_update selection_generation (fun () ->
+      let single_selected =
+        let rec loop c i =
+          if i >= Array.length neurons.value then c
+          else if neurons.value.(i).selected then
+            if c <> ~-1 then ~-1 else loop i (i + 1)
+          else
+            loop c (i + 1) in
+        loop ~-1 0 in
+      Param.set selected (
+        if single_selected >= 0 then
+          Some neurons.value.(single_selected)
+        else None))
+
   (* Return true if there was some change *)
   let iter_all f =
     for i = 0 to Array.length neurons.value - 1 do
@@ -730,7 +747,8 @@ struct
     Param.change neurons
 
   let hovered = Param.make "hovered neuron" None
-  let touch_hovered () =
+
+  let touch_hovered () = (* Used to redraw the neuron details *)
     Option.may (fun _ -> Param.change hovered) hovered.value
 
   let io_history = 15
@@ -746,7 +764,7 @@ struct
 
   let render t ~x ~y =
     let orig = pi x y in
-    fun_of hovered (fun hvd -> [
+    fun_of hovered (fun hvd -> [ (* Because we change the color according to this *)
       fun_of t.position (fun position -> [
         let is_hovered =
           match hvd with
@@ -1000,34 +1018,38 @@ struct
      * we run all possible inputs for the two globally selected, and for each neuron record their output (without
      * back propagating of course!). Then we restart the sim as normal.
      * Those maps can also be used to display the neuron instead of the big dot. *)
+    let render_details_of_neuron n =
+      let last_output =
+        "Last Output:"^ f2s n.output ^(
+          match n.layer with
+          | Input ->
+            let io = find_io inputs.value n.io_key in
+            let extr = CSV.get_extremum csv io in
+            let x = CSV.get_value csv io in
+            let x' = scale_input_rev n.func extr n.output in
+            "("^ f2s x' ^" for "^ f2s x ^")"
+          | Output ->
+            let io = find_io outputs.value n.io_key in
+            let extr = CSV.get_extremum csv io in
+            let t = CSV.get_value csv io in
+            let t' = scale_output_rev n.func extr n.output in
+            "("^ f2s t' ^" for "^ f2s t ^")"
+          | Hidden -> "")
+      in [
+        Widget.text ("Neuron "^ string_of_int n.id ^(if n.layer = Hidden then "("^ string_of_int n.io_key ^")" else "")) ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
+        Widget.text (string_of_int (List.length n.dendrits) ^"/"^ string_of_int (List.length n.axons) ^"cnx") ~x:(x + width/2) ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
+        Widget.text (string_of_transfer n.func) ~x ~y:(y + height - 2 * Layout.text_line_height) ~width:(width/3) ~height:Layout.text_line_height ;
+        Widget.text ("dE/dO="^ f2s n.dE_dOutput) ~x:(x + width/3) ~y:(y + height - 2 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
+        Widget.text last_output ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ;
+        fun_of last_outputs (fun last_out -> [
+          Graph.render last_out ~x ~y ~width ~height:(height - 3 * Layout.text_line_height) ]) ]
+    in
     fun_of hovered (function
-      | None -> []
-      | Some n ->
-        let last_output =
-          "Last Output:"^ f2s n.output ^(
-            match n.layer with
-            | Input ->
-              let io = find_io inputs.value n.io_key in
-              let extr = CSV.get_extremum csv io in
-              let x = CSV.get_value csv io in
-              let x' = scale_input_rev n.func extr n.output in
-              "("^ f2s x' ^" for "^ f2s x ^")"
-            | Output ->
-              let io = find_io outputs.value n.io_key in
-              let extr = CSV.get_extremum csv io in
-              let t = CSV.get_value csv io in
-              let t' = scale_output_rev n.func extr n.output in
-              "("^ f2s t' ^" for "^ f2s t ^")"
-            | Hidden -> "")
-        in [
-          Widget.text ("Neuron "^ string_of_int n.id ^(if n.layer = Hidden then "("^ string_of_int n.io_key ^")" else "")) ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
-          Widget.text (string_of_int (List.length n.dendrits) ^"/"^ string_of_int (List.length n.axons) ^"cnx") ~x:(x + width/2) ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
-          Widget.text (string_of_transfer n.func) ~x ~y:(y + height - 2 * Layout.text_line_height) ~width:(width/3) ~height:Layout.text_line_height ;
-          Widget.text ("dE/dO="^ f2s n.dE_dOutput) ~x:(x + width/3) ~y:(y + height - 2 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
-          Widget.text last_output ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ;
-          fun_of last_outputs (fun last_out -> [
-            Graph.render last_out ~x ~y ~width ~height:(height - 3 * Layout.text_line_height) ]) ;
-      ])
+      | None -> [
+        fun_of selected (function
+          | None -> []
+          | Some n -> render_details_of_neuron n) ]
+      | Some n -> render_details_of_neuron n)
 
   let render_all ~x ~y ~width ~height =
     fun_of Layout.control_column_width (fun control_width -> [
