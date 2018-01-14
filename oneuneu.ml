@@ -361,7 +361,10 @@ struct
           if new_idx <> cur_idx then
             Param.set param (options.(new_idx) |> fst)
       in
-      [ button label ~on_click ~x ~y ~width ~height ])
+      let arrow_w = 10 and label = "  "^ label in
+      [ button label ~on_click ~x ~y ~width ~height ;
+        text "‹" ~x ~y ~width:arrow_w ~height ;
+        text "›" ~x:(x + width - arrow_w) ~y ~width:arrow_w ~height ])
 
   let int_select ?(min=0) ?(max=max_int) ?(wrap=false) param ~x ~y ~width ~height =
     if min > max then
@@ -379,8 +382,11 @@ struct
             if wrap then max else min in
         Param.set param new_val
       in
-      [ button (string_of_int selected) ~on_click ~x ~y ~width ~height ])
-
+      let label =
+        (if selected > min then "- " else "  ")^
+        string_of_int selected ^
+        (if selected < max then " +" else "  ") in
+      [ button label ~on_click ~x ~y ~width ~height ])
 end
 
 (* Simple graphs to display evolution of values: *)
