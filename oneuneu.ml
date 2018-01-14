@@ -584,6 +584,9 @@ struct
   let iter_only layer f =
     iter_all (fun n -> if n.layer = layer then f n)
 
+  let iter_all_but layer f =
+    iter_all (fun n -> if n.layer <> layer then f n)
+
   let iter_back_all f =
     for i = Array.length neurons.value - 1 downto 0 do
       f neurons.value.(i)
@@ -797,6 +800,21 @@ struct
             | _ -> color in
           Ogli_render.shape_of_polys [ color, [ poly ] ] Point.origin [] ]) ]) ])
 
+  let connect_pair from to_ =
+    let already_connected =
+      List.exists (fun d -> d.source == from)
+        to_.dendrits in
+    if not already_connected then (
+      let new_d = dendrit from in
+      to_.dendrits <- new_d :: to_.dendrits ;
+      from.axons <- { dest = to_ ; dendrit = new_d } :: from.axons ;
+    )
+
+  let connect_from_to from to_ =
+    List.iter (fun from ->
+      List.iter (connect_pair from) to_
+    ) from
+
   let add_how_many = Param.make "#neurons to be added" 1
   let add_where = Param.make "where to add next neurons" 0
 
@@ -821,9 +839,17 @@ struct
             if i < Array.length ns then ns.(i) else
             (* Positions will be rearranged in rearrange_hidden_neurons *)
             (* For hidden neurons controller_id is the layer depth: *)
-            make add_where.value Hidden (pi 0 0)) in
+            make add_where.value Hidden Point.origin) in
         sort_neurons new_neurons ;
         Param.incr add_where ;
+        Param.set neurons new_neurons ;
+        rearrange_hidden_neurons ()
+      and add_bias _ _ =
+        let bias = make min_layer Hidden Point.origin in
+        bias.output <- 1. ;
+        iter_all_but Input (connect_pair bias) ;
+        let new_neurons = Array.append neurons.value [| bias |] in
+        sort_neurons new_neurons ;
         Param.set neurons new_neurons ;
         rearrange_hidden_neurons ()
       in
@@ -837,6 +863,7 @@ struct
           Widget.text "in layer" ~x:(x + add_w + add_sel_w) ~y:add_y ~width:add_label_w ~height:Layout.text_line_height ;
           Widget.int_select add_where ~min:min_layer ~max:max_layer ~x:(x + add_w + add_sel_w + add_label_w) ~y:add_y ~width:add_sel_w ~height:Layout.text_line_height ;
           Widget.button "ok" ~on_click:add ~x:(x + add_w + add_sel_w + add_label_w + add_sel_w) ~y:add_y ~width:add_sel_w ~height:Layout.text_line_height ;
+          Widget.button "Add a bias" ~on_click:add_bias ~x ~y:(add_y - Layout.text_line_height) ~width ~height:Layout.text_line_height ;
           (* Now buttons to connect/delete the selection: *)
           fun_of selection_generation (fun _ ->
             (* If we have input and hiddens, connect all inputs to all hiddens;
@@ -851,21 +878,8 @@ struct
                   | Hidden -> ins, n :: hids, outs, n :: all
                   | Output -> ins, hids, n :: outs, n :: all
               ) ([], [], [], []) in
-            let connect_ from to_ =
-              List.iter (fun to_ ->
-                List.iter (fun from ->
-                  let already_connected =
-                    List.exists (fun d -> d.source == from)
-                      to_.dendrits in
-                  if not already_connected then (
-                    let new_d = dendrit from in
-                    to_.dendrits <- new_d :: to_.dendrits ;
-                    from.axons <- { dest = to_ ; dendrit = new_d } :: from.axons ;
-                  )
-                ) from
-              ) to_ in
             let connect from to_ _ _ =
-              connect_ from to_ ;
+              connect_from_to from to_ ;
               Param.none box_selection ;
               unselect_all ()
             and connect_per_layers sel _ _ =
@@ -881,7 +895,7 @@ struct
               for i = 0 to Array.length keys - 2 do
                 let from = Map.find keys.(i) by_y
                 and to_ = Map.find keys.(i + 1) by_y in
-                connect_ from to_
+                connect_from_to from to_
               done ;
               Param.none box_selection ;
               unselect_all ()
@@ -889,7 +903,7 @@ struct
               List.iter (fun from ->
                 List.iter (fun to_ ->
                   if from.io_key < to_.io_key then
-                    connect_ [ from ] [ to_ ]
+                    connect_from_to [ from ] [ to_ ]
                 ) sel
               ) sel ;
               Param.none box_selection ;
