@@ -1286,8 +1286,10 @@ struct
                 if n > best_n then fname, n else prev
             with _ -> prev
           else prev) ("", 0) in
-      if f <> "" then (
-        if debug then Format.printf "Loading configuration from %s@." f ;
+      if f = "" then
+        Format.printf "Cannot find any save file for this CSV@."
+      else (
+        Format.printf "Loading configuration from %s@." f ;
         File.with_file_in f load_info ;
         Param.set need_save false ;
         Param.incr Neuron.selection_generation ;
