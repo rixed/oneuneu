@@ -1429,8 +1429,16 @@ let background_selection =
       let x0 = K.min start.(0) stop.(0) |> K.to_int
       and y0 = K.min start.(1) stop.(1) |> K.to_int
       and x1 = K.max start.(0) stop.(0) |> K.to_int
-      and y1 = K.max start.(1) stop.(1) |> K.to_int in
-      [ Widget.rect (c 0.6 0.6 0.9) ~x:x0 ~y:y0 ~width:(1 + (x1-x0)) ~height:(1 + (y1-y0)) ])
+      and y1 = K.max start.(1) stop.(1) |> K.to_int
+      and color = c 0.6 0.6 0.9 in
+      let width = 1 + (x1 - x0)
+      and height = 1 + (y1 - y0)
+      and w = 2 in
+      let hw = w/2 in
+      [ Widget.rect color ~x:(x0-hw) ~y:(y0-hw) ~width:(width+w) ~height:w ;
+        Widget.rect color ~x:(x1-hw) ~y:(y0-hw) ~width:w ~height:(height+w) ;
+        Widget.rect color ~x:(x0-hw) ~y:(y1-hw) ~width:(width+w) ~height:w ;
+        Widget.rect color ~x:(x0-hw) ~y:(y0-hw) ~width:w ~height:(height+w) ])
 
 (* Main view *)
 
