@@ -216,11 +216,15 @@ struct
             if wrap then max else min in
         Param.set param new_val
       in
-      let label =
-        (if selected > min then "- " else "  ")^
-        string_of_int selected ^
-        (if selected < max then " +" else "  ") in
-      [ button label ~on_click ~x ~y ~width ~height ])
+      let label = "  "^ string_of_int selected
+      and arrow_w = 10 in
+      [ button label ~on_click ~x ~y ~width ~height ;
+        (if selected > min then
+          text "‹" ~x ~y ~width:arrow_w ~height
+        else group []) ;
+        (if selected < max then
+          text "›" ~x:(x + width - arrow_w) ~y ~width:arrow_w ~height
+        else group []) ])
 end
 
 (* Reading the CSV file providing the training data *)
