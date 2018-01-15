@@ -744,29 +744,24 @@ struct
      * calculation: *)
     sort_io controllers |>
     List.fold_left (fun tot_width (io : io) ->
-      let nb_neurons = 1 (* TODO *) in
       let controller_id = io.id in
-      for order = 0 to nb_neurons - 1 do
-        let position =
-          pi (tot_width + f2i (
-                i2f io_width *.
-                ((i2f order +. 0.5) /. i2f nb_neurons)))
-             (if layer = Output then Layout.neuron_radius
-              else Layout.neural_net_height.value - Layout.neuron_radius) in
-        let io_key = controller_id in
-        match Map.extract io_key !old with
-        (* If absent, create a new one and add it to the result list. *)
-        | exception Not_found ->
-          let new_neuron = make io_key layer position in
-          res := new_neuron :: !res
-        (* If present, update its position, remove it from the old list and
-         * add it to the result. *)
-        | neuron, old' ->
-          if not (Point.eq neuron.position.value position) then
-            Param.set neuron.position position ;
-          old := old' ;
-          res := neuron :: !res
-      done ;
+      let position =
+        pi (tot_width + io_width / 2)
+           (if layer = Output then Layout.neuron_radius
+            else Layout.neural_net_height.value - Layout.neuron_radius) in
+      let io_key = controller_id in
+      (match Map.extract io_key !old with
+      (* If absent, create a new one and add it to the result list. *)
+      | exception Not_found ->
+        let new_neuron = make io_key layer position in
+        res := new_neuron :: !res
+      (* If present, update its position, remove it from the old list and
+       * add it to the result. *)
+      | neuron, old' ->
+        if not (Point.eq neuron.position.value position) then
+          Param.set neuron.position position ;
+        old := old' ;
+        res := neuron :: !res) ;
       tot_width + io_width
     ) 0 |> ignore ;
     (* Rebuild the resulting neurons array: *)
