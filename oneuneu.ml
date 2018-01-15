@@ -1454,7 +1454,11 @@ let () =
   Param.set Layout.screen_width width ;
   Param.set Layout.screen_height height ;
   let init double_buffer msaa =
-    Ogli_render.init ~title:"NeuralNet Test" ~font:(ONeuNeuConfig.lib_dir ^"/vera.ttf") ~double_buffer ~msaa width height ;
+    let dir = ONeuNeuConfig.lib_dir in
+    let dir =
+      let len = String.length dir in
+      if len > 0 && dir.[len - 1] <> '/' then dir ^"/" else dir in
+    Ogli_render.init ~title:"NeuralNet Test" ~font:(dir ^"vera.ttf") ~double_buffer ~msaa width height ;
     Ogli_view.make ~double_buffer ~width:Layout.screen_width ~height:Layout.screen_height dataviz_layout in
   let view =
     try init !double_buffer !msaa with Failure _ ->

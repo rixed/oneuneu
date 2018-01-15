@@ -43,9 +43,6 @@ distclean: clean
 
 # Installation
 
-bin_dir ?= /usr/bin
-lib_dir ?= /var/lib/oneuneu
-
 ONeuNeuConfig.ml:
 	echo 'let lib_dir = "$(lib_dir)"' > $@
 
@@ -65,11 +62,11 @@ reinstall: uninstall install
 
 # Debian
 
-deb:
+deb: distclean
 	mkdir -p debtmp
-	$(MAKE) DESTDIR=debtmp bin_dir=$(bin_dir) lib_dir=$(lib_dir) install
-	chmod a+x debtmp$(bin_dir)/oneuneu
-	sudo chown root: debtmp$(bin_dir)/oneuneu
+	$(MAKE) DESTDIR=debtmp bin_dir=/usr/bin lib_dir=/var/lib/oneuneu install
+	chmod a+x debtmp/usr/bin/oneuneu
+	sudo chown root: debtmp/usr/bin/oneuneu
 	$(RM) -r debtmp/DEBIAN
 	mkdir debtmp/DEBIAN
 	cp debian.control debtmp/DEBIAN/control
