@@ -91,6 +91,7 @@ struct
     { columns : string array ;
       extremums : (float * float) array ;
       lines : float array array ;
+      predictions : float option array array ;
       mutable idx : int (* current line to read values from *) ;
       name : string }
 
@@ -98,21 +99,25 @@ struct
     Array.init nb_cols (fun c -> "column "^ string_of_int c)
 
   let make columns lines name =
+    let nb_lines = Array.length lines
+    and nb_cols = Array.length columns  in
     let extremums = Array.map (fun v -> v, v) lines.(0) in
-    for l = 1 to Array.length lines - 1 do
+    for l = 1 to nb_lines - 1 do
       for c = 0 to Array.length lines.(l) - 1 do
         extremums.(c) <- min (fst extremums.(c)) lines.(l).(c),
                          max (snd extremums.(c)) lines.(l).(c)
       done
     done ;
     Format.printf "CSV %s columns: @[" name ;
-    for c = 0 to Array.length columns - 1 do
+    for c = 0 to nb_cols - 1 do
       let min, max = extremums.(c) in
       Format.printf "%s:%f->%f@;" columns.(c) min max ;
       if min = max then Format.printf "@,XXX NO VARIATION XXX@,"
     done ;
     Format.printf "@]@." ;
-    { columns ; lines ; name ; extremums ; idx = 0 }
+    let predictions =
+      Array.init nb_lines (fun _ -> Array.create nb_cols None) in
+    { columns ; lines ; predictions ; name ; extremums ; idx = 0 }
 
   let random_walk () =
     let nb_cols = 4 + Random.int 4
@@ -206,16 +211,71 @@ struct
   let get_value csv io =
     match io.lag.value, io.avg.value with
     | 0, 0 -> (* fast path *)
-      csv.lines.(csv.idx).(io.col.value)
+      csv.lines.(csv.idx).(io.col.value), (csv.idx, io.col.value)
     | lag, 0 ->
       let idx = offset_idx csv ~-(lag) in
-      csv.lines.(idx).(io.col.value)
+      csv.lines.(idx).(io.col.value), (idx, io.col.value)
     | lag, avg ->
       let rec sum i s =
         if i < 0 then s else
           let idx = offset_idx csv ~-(lag + i) in
           sum (i - 1) (s +. csv.lines.(idx).(io.col.value)) in
-      sum avg 0. /. i2f avg
+      sum avg 0. /. i2f avg, (~-1, ~-1 (* TODO *))
+
+  let predict csv (line, col) v =
+    if line < 0 then () (* TODO *) else
+      csv.predictions.(line).(col) <- Some v
+
+  let render ~col csv ~x ~y ~width ~height =
+    (* Draw a simple bar for each prediction/value. When we have several
+     * values per pixel draw the bounding box. *)
+    let vmi, vma = csv.extremums.(col) in
+    (* enlarge to account for bad predictions: *)
+    let vmi, vma =
+      let l = (vma -. vmi) *. 0.25 in
+      vmi -. l, vma +. l in
+    let y_ratio = i2f (height - 1) /. (vma -. vmi) in
+    let x_of_line l =
+      let max_l = Array.length csv.lines - 1 in
+      x + ((i2f l *. i2f (width - 1) /. i2f max_l) |> f2i)
+    and y_of_v v =
+      y + ((v -. vmi) *. y_ratio |> f2i |> max 0 |> min (height - 1))
+    in
+    let rec loop polys last_x y_lims line =
+      if line >= Array.length csv.lines then polys else
+      match csv.predictions.(line).(col) with
+      | None ->
+          (* Just skip *)
+          loop polys last_x y_lims (line + 1)
+      | Some v0 ->
+        let v1 = csv.lines.(line).(col) in
+        let v0, v1 =
+          if v0 <= v1 then v0, v1 else v1, v0 in
+        let x = x_of_line line in
+        (match y_lims with
+        | None ->
+            (* Start a new box *)
+            loop polys x (Some (v0, v1)) (line + 1)
+        | Some (pv0, pv1) ->
+            if x = last_x then
+              (* If we are on the same x then grow the box: *)
+              loop polys last_x (Some (min v0 pv0, max v1 pv1)) (line + 1)
+            else (
+              (* Otherwise draw the prev box and start a new one: *)
+              let y0 = y_of_v pv0 and y1 = y_of_v pv1 in
+              let (++) = Poly.insert_after in
+              let p =
+                Poly.empty ++
+                pi last_x y0 ++
+                pi x y0 ++
+                pi x y1 ++
+                pi last_x y1 in
+              let polys = p :: polys in
+              loop polys x (Some (v0, v1)) (line + 1)))
+    in
+    let polys = loop [] ~-1 None 0
+    and color = c 0.5 0.5 0.5 in
+    Ogli_render.shape_of_polys (List.map (fun p -> color, [ p ]) polys) Point.origin []
 end
 
 let msaa = ref true
@@ -457,7 +517,7 @@ struct
         Widget.rect C.black ~x ~y:(y + f2i yy) ~width ~height:1
       else group [] in
     let tick = group [] (* TODO *) in
-    let plot = 
+    let plot =
       let point i =
         let v = g.values.(i) in
         pf (t2x i) (v2y v) in
@@ -1031,13 +1091,13 @@ struct
           | Input ->
             let io = find_io inputs.value n.io_key in
             let extr = CSV.get_extremum csv io in
-            let x = CSV.get_value csv io in
+            let x, _curs = CSV.get_value csv io in
             let x' = scale_input_rev n.func extr n.output in
             "("^ f2s x' ^" for "^ f2s x ^")"
           | Output ->
             let io = find_io outputs.value n.io_key in
             let extr = CSV.get_extremum csv io in
-            let t = CSV.get_value csv io in
+            let t, _curs = CSV.get_value csv io in
             let t' = scale_output_rev n.func extr n.output in
             "("^ f2s t' ^" for "^ f2s t ^")"
           | Hidden -> "")
@@ -1167,7 +1227,7 @@ struct
     let open Neuron in
     iter_only Input (fun n ->
       let io = find_io inputs.value n.io_key in
-      let x = CSV.get_value csv io
+      let x, _curs = CSV.get_value csv io
       and extr = CSV.get_extremum csv io in
       let o = scale_input n.func extr x in
       (* Note that we do *not* go through the transfer function itself.
@@ -1231,17 +1291,19 @@ struct
    * see https://en.wikipedia.org/wiki/Rprop *)
   let back_propagation learn_speed =
     let open Neuron in
-    (* Begin with setting the dE_dOutput of the output nodes *)
+    (* Begin with setting the dE_dOutput of the output nodes.
+     * While at it, also save the prediction in the CSV. *)
     let tot_err, _ =
       fold_only Output (fun (e, i) n ->
         let io = find_io outputs.value n.io_key in
-        let t = CSV.get_value csv io
+        let t, cursor = CSV.get_value csv io
         and extr = CSV.get_extremum csv io in
         (* Same remark as in forward_propagation regarding the
          * transfer function of output neurons. *)
         let r = scale_output_rev n.func extr n.output in
         n.dE_dOutput <- (r -. t) /. (snd extr -. fst extr) ;
         assert (compare nan n.dE_dOutput <> 0) ;
+        CSV.predict csv cursor r ;
         e +. 0.5 *. sq n.dE_dOutput,
         i + 1
       ) (0., 0) in
@@ -1380,8 +1442,24 @@ let render_result_controls ~x ~y ~width ~height =
 let render_results ~x ~y ~width ~height =
   fun_of Layout.control_column_width (fun control_width -> [
     group (render_result_controls ~x ~y ~width:control_width ~height) ;
-    fun_of Simulation.tot_err_graph (fun graph ->
-      [ Graph.render graph ~x:(x + control_width) ~y ~width:(width - control_width) ~height ]) ])
+    let x = x + control_width and width = width - control_width in
+    let render_tot_err () =
+      fun_of Simulation.tot_err_graph (fun graph ->
+        [ Graph.render graph ~x ~y ~width ~height ])
+    and render_predictions n =
+      fun_of Simulation.nb_steps_update (fun () -> [
+        let output = find_io outputs.value n.Neuron.io_key in
+        fun_of output.col (fun col -> [
+          fun_of output.avg (fun avg -> [
+            if avg <> 0 then Widget.todo ~x ~y ~width ~height
+            else CSV.render ~col csv ~x ~y ~width ~height ]) ]) ])
+    in
+    fun_of Neuron.hovered (function
+      | Some n when n.layer = Output -> [ render_predictions n ]
+      | _ -> [
+        fun_of Neuron.selected (function
+          | Some n when n.layer = Output -> [ render_predictions n ]
+          | _ -> [ render_tot_err () ]) ]) ])
 
 let is_in_box_selection start stop pos =
   let in_between a b c = a <= c && c <= b in
@@ -1455,7 +1533,7 @@ let dataviz_layout =
           fun_of Layout.output_width (fun output_width -> [
             IO.render_all "Output" outputs output_width ~x:0 ~y:(screen_h - (Layout.inputs_height + neural_net_height + outputs_height)) ~width:screen_w ~height:outputs_height ;
             fun_of Layout.result_height (fun result_height -> [
-              render_results ~x:0 ~y:(screen_h - (Layout.inputs_height + neural_net_height + outputs_height + result_height)) ~width:screen_w ~height:result_height ])])])])])])
+              render_results ~x:0 ~y:0 ~width:screen_w ~height:result_height ])])])])])])
 
 let () =
   let width = 800 and height = 600 in
