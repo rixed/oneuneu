@@ -232,6 +232,8 @@ struct
       extremums : (float * float) array ;
       lines : float array array ;
       predictions : float option array array ;
+      shuffling : int array ;
+      mutable shuffling_idx : int ;
       mutable min_tot_err : float ;
       mutable idx : int (* current line to read values from *) ;
       name : string }
@@ -257,9 +259,11 @@ struct
     done ;
     Format.printf "@]@." ;
     let predictions =
-      Array.init nb_lines (fun _ -> Array.create nb_cols None) in
+      Array.init nb_lines (fun _ -> Array.create nb_cols None)
+    and shuffling = Array.init nb_lines (fun i -> i) in
+    Array.shuffle shuffling ;
     { columns ; lines ; predictions ; min_tot_err = max_float ;
-      name ; extremums ; idx = 0 }
+      name ; extremums ; shuffling ; shuffling_idx = 0 ; idx = shuffling.(0) }
 
   let random_walk () =
     let nb_cols = 4 + Random.int 4
@@ -345,7 +349,10 @@ struct
     Lr44.pos_mod (csv.idx + off) (Array.length csv.lines)
 
   let next csv =
-    csv.idx <- Random.int (Array.length csv.lines)
+    (* Iter over each line before looping *)
+    csv.shuffling_idx <- csv.shuffling_idx + 1 ;
+    if csv.shuffling_idx >= Array.length csv.shuffling then csv.shuffling_idx <- 0 ;
+    csv.idx <- csv.shuffling.(csv.shuffling_idx)
 
   let get_extremum csv io = csv.extremums.(io.col.value)
 
@@ -417,7 +424,8 @@ struct
     in
     let tot_err, skipped, polys = loop 0. 0 [] ~-1 None 0 in
     let title =
-      if skipped > Array.length csv.lines / 4 then "" else
+      (* Wait before we have visited at least half the data before recording min error: *)
+      if skipped > Array.length csv.lines / 2 then "" else
         let avg = tot_err /. i2f (Array.length csv.lines - skipped) in
         let e = tot_err +. avg *. i2f skipped in
         if e < csv.min_tot_err then csv.min_tot_err <- e ;
