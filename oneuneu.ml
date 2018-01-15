@@ -177,7 +177,6 @@ struct
     if Array.length lines < 1 then invalid_arg "Empty CSV file" ;
     let nb_cols = String.nsplit ~by:"," lines.(0) |> List.length in
     let columns, first_line =
-      Format.printf "first char = %c@." lines.(0).[0] ;
       if lines.(0).[0] = '#' then
         columns_of_header lines.(0), 1
       else
