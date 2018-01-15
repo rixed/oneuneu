@@ -356,7 +356,10 @@ struct
   let next csv =
     (* Iter over each line before looping *)
     csv.shuffling_idx <- csv.shuffling_idx + 1 ;
-    if csv.shuffling_idx >= Array.length csv.shuffling then csv.shuffling_idx <- 0 ;
+    if csv.shuffling_idx >= Array.length csv.shuffling then (
+      Array.shuffle csv.shuffling ;
+      csv.shuffling_idx <- 0 ;
+    ) ;
     csv.idx <- csv.shuffling.(csv.shuffling_idx)
 
   let get_extremum csv io = csv.extremums.(io.col.value)
