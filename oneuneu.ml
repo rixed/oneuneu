@@ -232,6 +232,7 @@ struct
       extremums : (float * float) array ;
       lines : float array array ;
       predictions : float option array array ;
+      naive_err : float array ;
       shuffling : int array ;
       mutable shuffling_idx : int ;
       mutable min_tot_err : float ;
@@ -245,10 +246,14 @@ struct
     let nb_lines = Array.length lines
     and nb_cols = Array.length columns  in
     let extremums = Array.map (fun v -> v, v) lines.(0) in
+    let naive_err = Array.create nb_cols 0. in
     for l = 1 to nb_lines - 1 do
       for c = 0 to Array.length lines.(l) - 1 do
         extremums.(c) <- min (fst extremums.(c)) lines.(l).(c),
-                         max (snd extremums.(c)) lines.(l).(c)
+                         max (snd extremums.(c)) lines.(l).(c) ;
+        if l >= 1 then
+          naive_err.(c) <- naive_err.(c) +.
+                           abs_float (lines.(l).(c) -. lines.(l-1).(c))
       done
     done ;
     Format.printf "CSV %s columns: @[" name ;
@@ -262,7 +267,7 @@ struct
       Array.init nb_lines (fun _ -> Array.create nb_cols None)
     and shuffling = Array.init nb_lines (fun i -> i) in
     Array.shuffle shuffling ;
-    { columns ; lines ; predictions ; min_tot_err = max_float ;
+    { columns ; lines ; predictions ; min_tot_err = max_float ; naive_err ;
       name ; extremums ; shuffling ; shuffling_idx = 0 ; idx = shuffling.(0) }
 
   let random_walk () =
@@ -423,13 +428,14 @@ struct
               loop tot_err skipped polys x (Some (v0, v1)) (line + 1)))
     in
     let tot_err, skipped, polys = loop 0. 0 [] ~-1 None 0 in
+    let title = "naive err: "^ f2s csv.naive_err.(col) in
     let title =
       (* Wait before we have visited at least half the data before recording min error: *)
-      if skipped > Array.length csv.lines / 2 then "" else
+      if skipped > Array.length csv.lines / 2 then title else
         let avg = tot_err /. i2f (Array.length csv.lines - skipped) in
         let e = tot_err +. avg *. i2f skipped in
         if e < csv.min_tot_err then csv.min_tot_err <- e ;
-        "∑err: "^ f2s e ^" (min: "^ f2s csv.min_tot_err ^")"
+        title ^" - ∑err: "^ f2s e ^" (min: "^ f2s csv.min_tot_err ^")"
     and color = c 0.5 0.5 0.5 in
     group [
       Ogli_render.shape_of_polys (List.map (fun p -> color, [ p ]) polys) Point.origin [] ;
