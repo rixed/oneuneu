@@ -83,231 +83,6 @@ let outputs = Param.make ~on_update:set_need_save "outputs" []
 
 let box_selection = Param.make "box selection" None
 
-(* Reading the CSV file providing the training data *)
-
-module CSV =
-struct
-  type t =
-    { columns : string array ;
-      extremums : (float * float) array ;
-      lines : float array array ;
-      predictions : float option array array ;
-      mutable idx : int (* current line to read values from *) ;
-      name : string }
-
-  let random_columns nb_cols =
-    Array.init nb_cols (fun c -> "column "^ string_of_int c)
-
-  let make columns lines name =
-    let nb_lines = Array.length lines
-    and nb_cols = Array.length columns  in
-    let extremums = Array.map (fun v -> v, v) lines.(0) in
-    for l = 1 to nb_lines - 1 do
-      for c = 0 to Array.length lines.(l) - 1 do
-        extremums.(c) <- min (fst extremums.(c)) lines.(l).(c),
-                         max (snd extremums.(c)) lines.(l).(c)
-      done
-    done ;
-    Format.printf "CSV %s columns: @[" name ;
-    for c = 0 to nb_cols - 1 do
-      let min, max = extremums.(c) in
-      Format.printf "%s:%f->%f@;" columns.(c) min max ;
-      if min = max then Format.printf "@,XXX NO VARIATION XXX@,"
-    done ;
-    Format.printf "@]@." ;
-    let predictions =
-      Array.init nb_lines (fun _ -> Array.create nb_cols None) in
-    { columns ; lines ; predictions ; name ; extremums ; idx = 0 }
-
-  let random_walk () =
-    let nb_cols = 4 + Random.int 4
-    and nb_lines = 40 + Random.int 100 in
-    let columns = random_columns nb_cols in
-    let lines =
-      Array.init nb_lines (fun _ ->
-        Array.init nb_cols (fun _ -> Random.float 1.)) in
-    for l = 1 to nb_lines - 1 do
-      for c = 0 to nb_cols - 1 do
-        lines.(l).(c) <- lines.(l-1).(c) +. lines.(l).(c)
-      done
-    done ;
-    let name = Printf.sprintf "random_%dx%d" nb_cols nb_lines in
-    make columns lines name
-
-  let columns_of_header h =
-    String.lchop h |>
-    String.nsplit ~by:"," |>
-    Array.of_list
-
-  (* Append various times to the columns *)
-  let append_times field_num to_secs columns lines =
-    let open Unix in
-    let infos =
-      [| "seconds", (fun tm -> tm.tm_sec) ;
-         "minutes", (fun tm -> tm.tm_min) ;
-         "hour", (fun tm -> tm.tm_hour) ;
-         "day of month", (fun tm -> tm.tm_mday) ;
-         "month", (fun tm -> tm.tm_mon + 1) ;
-         "year", (fun tm -> tm.tm_year + 1900) ;
-         "day of week", (fun tm -> tm.tm_wday) ;
-         "day of year", (fun tm -> tm.tm_yday + 1) ;
-         "week-end", (fun tm -> if tm.tm_wday = 0 || tm.tm_wday = 6 then 1 else 0) ;
-         "sunday", (fun tm -> if tm.tm_wday = 0 then 1 else 0) ;
-         "monday", (fun tm -> if tm.tm_wday = 1 then 1 else 0) ;
-         "tuesday", (fun tm -> if tm.tm_wday = 2 then 1 else 0) ;
-         "wednesday", (fun tm -> if tm.tm_wday = 3 then 1 else 0) ;
-         "thursday", (fun tm -> if tm.tm_wday = 4 then 1 else 0) ;
-         "friday", (fun tm -> if tm.tm_wday = 5 then 1 else 0) ;
-         "saturday", (fun tm -> if tm.tm_wday = 6 then 1 else 0) |] in
-    let columns =
-      Array.map fst infos |>
-      Array.append columns
-    and lines =
-      Array.map (fun line ->
-        let tm = line.(field_num) *. to_secs |>
-                 localtime in
-        Array.map (fun (_, f) -> i2f (f tm)) infos |>
-        Array.append line
-        ) lines
-    in
-    columns, lines
-
-  let load fname minutes_f seconds_f =
-    let lines = File.lines_of fname |> Array.of_enum in
-    if Array.length lines < 1 then invalid_arg "Empty CSV file" ;
-    let nb_cols = String.nsplit ~by:"," lines.(0) |> List.length in
-    let columns, first_line =
-      if lines.(0).[0] = '#' then
-        columns_of_header lines.(0), 1
-      else
-        random_columns nb_cols, 0 in
-    let nb_lines = Array.length lines - first_line in
-    let my_float_of_string s =
-      try float_of_string s
-      with Failure _ ->
-        Format.printf "Error: cannot parse %S@." s ;
-        0. in
-    let lines =
-      Array.init nb_lines (fun i ->
-        let l = lines.(first_line + i) in
-        String.nsplit ~by:"," l |>
-        List.map my_float_of_string |>
-        Array.of_list) in
-    let columns, lines =
-      if seconds_f >= 0 then append_times seconds_f 1. columns lines else
-      if minutes_f >= 0 then append_times minutes_f 60. columns lines else
-      columns, lines in
-    make columns lines fname
-
-  let offset_idx csv off =
-    Lr44.pos_mod (csv.idx + off) (Array.length csv.lines)
-
-  let next csv =
-    csv.idx <- Random.int (Array.length csv.lines)
-
-  let get_extremum csv io = csv.extremums.(io.col.value)
-
-  let get_value csv io =
-    match io.lag.value, io.avg.value with
-    | 0, 0 -> (* fast path *)
-      csv.lines.(csv.idx).(io.col.value), (csv.idx, io.col.value)
-    | lag, 0 ->
-      let idx = offset_idx csv ~-(lag) in
-      csv.lines.(idx).(io.col.value), (idx, io.col.value)
-    | lag, avg ->
-      let rec sum i s =
-        if i < 0 then s else
-          let idx = offset_idx csv ~-(lag + i) in
-          sum (i - 1) (s +. csv.lines.(idx).(io.col.value)) in
-      sum avg 0. /. i2f avg, (~-1, ~-1 (* TODO *))
-
-  let predict csv (line, col) v =
-    if line < 0 then () (* TODO *) else
-      csv.predictions.(line).(col) <- Some v
-
-  let render ~col csv ~x ~y ~width ~height =
-    (* Draw a simple bar for each prediction/value. When we have several
-     * values per pixel draw the bounding box. *)
-    let vmi, vma = csv.extremums.(col) in
-    (* enlarge to account for bad predictions: *)
-    let vmi, vma =
-      let l = (vma -. vmi) *. 0.25 in
-      vmi -. l, vma +. l in
-    let y_ratio = i2f (height - 1) /. (vma -. vmi) in
-    let x_of_line l =
-      let max_l = Array.length csv.lines - 1 in
-      x + ((i2f l *. i2f (width - 1) /. i2f max_l) |> f2i)
-    and y_of_v v =
-      y + ((v -. vmi) *. y_ratio |> f2i |> max 0 |> min (height - 1))
-    in
-    let rec loop polys last_x y_lims line =
-      if line >= Array.length csv.lines then polys else
-      match csv.predictions.(line).(col) with
-      | None ->
-          (* Just skip *)
-          loop polys last_x y_lims (line + 1)
-      | Some v0 ->
-        let v1 = csv.lines.(line).(col) in
-        let v0, v1 =
-          if v0 <= v1 then v0, v1 else v1, v0 in
-        let x = x_of_line line in
-        (match y_lims with
-        | None ->
-            (* Start a new box *)
-            loop polys x (Some (v0, v1)) (line + 1)
-        | Some (pv0, pv1) ->
-            if x = last_x then
-              (* If we are on the same x then grow the box: *)
-              loop polys last_x (Some (min v0 pv0, max v1 pv1)) (line + 1)
-            else (
-              (* Otherwise draw the prev box and start a new one: *)
-              let y0 = y_of_v pv0 and y1 = y_of_v pv1 in
-              let (++) = Poly.insert_after in
-              let p =
-                Poly.empty ++
-                pi last_x y0 ++
-                pi x y0 ++
-                pi x y1 ++
-                pi last_x y1 in
-              let polys = p :: polys in
-              loop polys x (Some (v0, v1)) (line + 1)))
-    in
-    let polys = loop [] ~-1 None 0
-    and color = c 0.5 0.5 0.5 in
-    Ogli_render.shape_of_polys (List.map (fun p -> color, [ p ]) polys) Point.origin []
-end
-
-let msaa = ref true
-let double_buffer = ref false
-
-let csv =
-  let csv_file = ref ""
-  and seconds_field = ref ~-1
-  and minutes_field = ref ~-1
-  in
-  Arg.(parse [
-    "--csv", Set_string csv_file, "CSV file to use" ;
-    "--timestamp", Set_int seconds_field, "Use this field number (starting at 0) as source of EPOCH seconds" ;
-    "--minutes", Set_int minutes_field, "Use this field number (starting at 0) as source of EPOCH minutes" ;
-    "--no-msaa", Clear msaa, "Disable MSAA" ;
-    "--double-buffer", Set double_buffer, "Force double-buffer" ]
-    (fun str -> raise (Bad ("Unknown argument "^ str)))
-    "Neural Network Playground for timeseries prediction") ;
-  if !seconds_field >= 0 && !minutes_field >= 0 then (
-    Printf.eprintf "You cannot use both minutes and timestamp\n" ;
-    exit 1) ;
-  if !csv_file = "" then CSV.random_walk ()
-  else CSV.load !csv_file !minutes_field !seconds_field
-
-(* List of options suitable for select widgets: *)
-let csv_fields =
-  Array.fold_lefti (fun lst i v ->
-    let mi, ma = csv.extremums.(i) in
-    if mi < ma then (i, v) :: lst else lst
-  ) [] csv.columns |>
-  Array.of_list |>
-  Array.rev
-
 (* UI layout *)
 
 module Layout =
@@ -447,6 +222,242 @@ struct
         (if selected < max then " +" else "  ") in
       [ button label ~on_click ~x ~y ~width ~height ])
 end
+
+(* Reading the CSV file providing the training data *)
+
+module CSV =
+struct
+  type t =
+    { columns : string array ;
+      extremums : (float * float) array ;
+      lines : float array array ;
+      predictions : float option array array ;
+      mutable min_tot_err : float ;
+      mutable idx : int (* current line to read values from *) ;
+      name : string }
+
+  let random_columns nb_cols =
+    Array.init nb_cols (fun c -> "column "^ string_of_int c)
+
+  let make columns lines name =
+    let nb_lines = Array.length lines
+    and nb_cols = Array.length columns  in
+    let extremums = Array.map (fun v -> v, v) lines.(0) in
+    for l = 1 to nb_lines - 1 do
+      for c = 0 to Array.length lines.(l) - 1 do
+        extremums.(c) <- min (fst extremums.(c)) lines.(l).(c),
+                         max (snd extremums.(c)) lines.(l).(c)
+      done
+    done ;
+    Format.printf "CSV %s columns: @[" name ;
+    for c = 0 to nb_cols - 1 do
+      let min, max = extremums.(c) in
+      Format.printf "%s:%f->%f@;" columns.(c) min max ;
+      if min = max then Format.printf "@,XXX NO VARIATION XXX@,"
+    done ;
+    Format.printf "@]@." ;
+    let predictions =
+      Array.init nb_lines (fun _ -> Array.create nb_cols None) in
+    { columns ; lines ; predictions ; min_tot_err = max_float ;
+      name ; extremums ; idx = 0 }
+
+  let random_walk () =
+    let nb_cols = 4 + Random.int 4
+    and nb_lines = 40 + Random.int 100 in
+    let columns = random_columns nb_cols in
+    let lines =
+      Array.init nb_lines (fun _ ->
+        Array.init nb_cols (fun _ -> Random.float 1.)) in
+    for l = 1 to nb_lines - 1 do
+      for c = 0 to nb_cols - 1 do
+        lines.(l).(c) <- lines.(l-1).(c) +. lines.(l).(c)
+      done
+    done ;
+    let name = Printf.sprintf "random_%dx%d" nb_cols nb_lines in
+    make columns lines name
+
+  let columns_of_header h =
+    String.lchop h |>
+    String.nsplit ~by:"," |>
+    Array.of_list
+
+  (* Append various times to the columns *)
+  let append_times field_num to_secs columns lines =
+    let open Unix in
+    let infos =
+      [| "seconds", (fun tm -> tm.tm_sec) ;
+         "minutes", (fun tm -> tm.tm_min) ;
+         "hour", (fun tm -> tm.tm_hour) ;
+         "day of month", (fun tm -> tm.tm_mday) ;
+         "month", (fun tm -> tm.tm_mon + 1) ;
+         "year", (fun tm -> tm.tm_year + 1900) ;
+         "day of week", (fun tm -> tm.tm_wday) ;
+         "day of year", (fun tm -> tm.tm_yday + 1) ;
+         "week-end", (fun tm -> if tm.tm_wday = 0 || tm.tm_wday = 6 then 1 else 0) ;
+         "sunday", (fun tm -> if tm.tm_wday = 0 then 1 else 0) ;
+         "monday", (fun tm -> if tm.tm_wday = 1 then 1 else 0) ;
+         "tuesday", (fun tm -> if tm.tm_wday = 2 then 1 else 0) ;
+         "wednesday", (fun tm -> if tm.tm_wday = 3 then 1 else 0) ;
+         "thursday", (fun tm -> if tm.tm_wday = 4 then 1 else 0) ;
+         "friday", (fun tm -> if tm.tm_wday = 5 then 1 else 0) ;
+         "saturday", (fun tm -> if tm.tm_wday = 6 then 1 else 0) |] in
+    let columns =
+      Array.map fst infos |>
+      Array.append columns
+    and lines =
+      Array.map (fun line ->
+        let tm = line.(field_num) *. to_secs |>
+                 localtime in
+        Array.map (fun (_, f) -> i2f (f tm)) infos |>
+        Array.append line
+        ) lines
+    in
+    columns, lines
+
+  let load fname minutes_f seconds_f =
+    let lines = File.lines_of fname |> Array.of_enum in
+    if Array.length lines < 1 then invalid_arg "Empty CSV file" ;
+    let nb_cols = String.nsplit ~by:"," lines.(0) |> List.length in
+    let columns, first_line =
+      if lines.(0).[0] = '#' then
+        columns_of_header lines.(0), 1
+      else
+        random_columns nb_cols, 0 in
+    let nb_lines = Array.length lines - first_line in
+    let my_float_of_string s =
+      try float_of_string s
+      with Failure _ ->
+        Format.printf "Error: cannot parse %S@." s ;
+        0. in
+    let lines =
+      Array.init nb_lines (fun i ->
+        let l = lines.(first_line + i) in
+        String.nsplit ~by:"," l |>
+        List.map my_float_of_string |>
+        Array.of_list) in
+    let columns, lines =
+      if seconds_f >= 0 then append_times seconds_f 1. columns lines else
+      if minutes_f >= 0 then append_times minutes_f 60. columns lines else
+      columns, lines in
+    make columns lines fname
+
+  let offset_idx csv off =
+    Lr44.pos_mod (csv.idx + off) (Array.length csv.lines)
+
+  let next csv =
+    csv.idx <- Random.int (Array.length csv.lines)
+
+  let get_extremum csv io = csv.extremums.(io.col.value)
+
+  let get_value csv io =
+    match io.lag.value, io.avg.value with
+    | 0, 0 -> (* fast path *)
+      csv.lines.(csv.idx).(io.col.value), (csv.idx, io.col.value)
+    | lag, 0 ->
+      let idx = offset_idx csv ~-(lag) in
+      csv.lines.(idx).(io.col.value), (idx, io.col.value)
+    | lag, avg ->
+      let rec sum i s =
+        if i < 0 then s else
+          let idx = offset_idx csv ~-(lag + i) in
+          sum (i - 1) (s +. csv.lines.(idx).(io.col.value)) in
+      sum avg 0. /. i2f avg, (~-1, ~-1 (* TODO *))
+
+  let predict csv (line, col) v =
+    if line < 0 then () (* TODO *) else
+      csv.predictions.(line).(col) <- Some v
+
+  let render ~col csv ~x ~y ~width ~height =
+    (* Draw a simple bar for each prediction/value. When we have several
+     * values per pixel draw the bounding box. *)
+    let vmi, vma = csv.extremums.(col) in
+    (* Enlarge to account for bad predictions: *)
+    let vmi, vma =
+      let l = (vma -. vmi) *. 0.1 in
+      vmi -. l, vma +. l in
+    let y_ratio = i2f (height - 1) /. (vma -. vmi) in
+    let x_of_line l =
+      let max_l = Array.length csv.lines - 1 in
+      x + ((i2f l *. i2f (width - 1) /. i2f max_l) |> f2i)
+    and y_of_v v =
+      y + ((v -. vmi) *. y_ratio |> f2i |> max 0 |> min (height - 1))
+    in
+    let rec loop tot_err skipped polys last_x y_lims line =
+      if line >= Array.length csv.lines then tot_err, skipped, polys
+      else match csv.predictions.(line).(col) with
+      | None ->
+          (* Just skip *)
+          loop tot_err (skipped + 1) polys last_x y_lims (line + 1)
+      | Some v0 ->
+        let v1 = csv.lines.(line).(col) in
+        let v0, v1 =
+          if v0 <= v1 then v0, v1 else v1, v0 in
+        let tot_err = tot_err +. v1 -. v0 in
+        let x = x_of_line line in
+        (match y_lims with
+        | None ->
+            (* Start a new box *)
+            loop tot_err skipped polys x (Some (v0, v1)) (line + 1)
+        | Some (pv0, pv1) ->
+            if x = last_x then
+              (* If we are on the same x then grow the box: *)
+              loop tot_err skipped polys last_x (Some (min v0 pv0, max v1 pv1)) (line + 1)
+            else (
+              (* Otherwise draw the prev box and start a new one: *)
+              let y0 = y_of_v pv0 and y1 = y_of_v pv1 in
+              let (++) = Poly.insert_after in
+              let p =
+                Poly.empty ++
+                pi last_x y0 ++
+                pi x y0 ++
+                pi x y1 ++
+                pi last_x y1 in
+              let polys = p :: polys in
+              loop tot_err skipped polys x (Some (v0, v1)) (line + 1)))
+    in
+    let tot_err, skipped, polys = loop 0. 0 [] ~-1 None 0 in
+    let title =
+      if skipped > Array.length csv.lines / 4 then "" else
+        let avg = tot_err /. i2f (Array.length csv.lines - skipped) in
+        let e = tot_err +. avg *. i2f skipped in
+        if e < csv.min_tot_err then csv.min_tot_err <- e ;
+        "∑err: "^ f2s e ^" (min: "^ f2s csv.min_tot_err ^")"
+    and color = c 0.5 0.5 0.5 in
+    group [
+      Ogli_render.shape_of_polys (List.map (fun p -> color, [ p ]) polys) Point.origin [] ;
+      Widget.text title ~x ~y:(y + height - Layout.text_line_height) ~width ~height:Layout.text_line_height ]
+end
+
+let msaa = ref true
+let double_buffer = ref false
+
+let csv =
+  let csv_file = ref ""
+  and seconds_field = ref ~-1
+  and minutes_field = ref ~-1
+  in
+  Arg.(parse [
+    "--csv", Set_string csv_file, "CSV file to use" ;
+    "--timestamp", Set_int seconds_field, "Use this field number (starting at 0) as source of EPOCH seconds" ;
+    "--minutes", Set_int minutes_field, "Use this field number (starting at 0) as source of EPOCH minutes" ;
+    "--no-msaa", Clear msaa, "Disable MSAA" ;
+    "--double-buffer", Set double_buffer, "Force double-buffer" ]
+    (fun str -> raise (Bad ("Unknown argument "^ str)))
+    "Neural Network Playground for timeseries prediction") ;
+  if !seconds_field >= 0 && !minutes_field >= 0 then (
+    Printf.eprintf "You cannot use both minutes and timestamp\n" ;
+    exit 1) ;
+  if !csv_file = "" then CSV.random_walk ()
+  else CSV.load !csv_file !minutes_field !seconds_field
+
+(* List of options suitable for select widgets: *)
+let csv_fields =
+  Array.fold_lefti (fun lst i v ->
+    let mi, ma = csv.extremums.(i) in
+    if mi < ma then (i, v) :: lst else lst
+  ) [] csv.columns |>
+  Array.of_list |>
+  Array.rev
 
 (* Simple graphs to display evolution of values: *)
 
