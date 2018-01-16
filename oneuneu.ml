@@ -1,4 +1,5 @@
 open Batteries
+open Option.Infix
 open Ogli
 open Ogli_view
 
@@ -165,9 +166,11 @@ struct
     let size = float_of_int Layout.text_line_height in
     Ogli_render.shape_of_text ~move_to_lower_left:true ?on_click color size text position []
 
-  let button ?on_click label ~x ~y ~width ~height =
+  let button ?on_click ?(selected=false) label ~x ~y ~width ~height =
+    let color =
+      if selected then c 0.5 0.9 0.5 else c 0.8 0.8 0.8 in
     group [
-      rect ?on_click (c 0.8 0.8 0.8) ~x ~y ~width ~height ;
+      rect ?on_click color ~x ~y ~width ~height ;
       text ?on_click label ~x ~y ~width ~height ]
 
   let click_left_right ~x ~width pos =
@@ -235,6 +238,23 @@ struct
         (if wrap || selected < max then
           text "›" ~x:(x + width - arrow_w) ~y ~width:arrow_w ~height
         else group []) ])
+
+  let heightmap map ~x ~y ~width ~height =
+    let polys = ref [] in
+    for yi = 0 to Array.length map - 1 do
+      let height = height / Array.length map in
+      let y = y + yi * height in
+      for xi = 0 to Array.length map.(yi) - 1 do
+        let width = width / Array.length map.(yi) in
+        let x = x + xi * width in
+        let h = map.(yi).(xi) |> min 1. |> max 0. in
+        let color = c h h h in
+        let poly = Path.rect (pi x y) (pi (x + width) (y + height)) |>
+                   Algo.poly_of_path ~res:K.one (* unused *) in
+        polys := (color, [ poly ]) :: !polys
+      done
+    done ;
+    Ogli_render.shape_of_polys !polys Point.origin []
 end
 
 (* Reading the CSV file providing the training data *)
@@ -601,6 +621,8 @@ struct
 
   type layer = Input | Hidden | Output [@@ppp PPP_JSON]
 
+  let io_map_sz = 20
+
   type dendrit =
     { source : t ;
       mutable weight : float ;
@@ -619,9 +641,20 @@ struct
       mutable dendrits : dendrit list ;
       mutable axons : axon list ;
       mutable selected : bool ;
-      position : Point.t Param.t (* relative to the net window (right column) so it eventually depends on screen size *) }
+      (* relative to the net window (right column) so it eventually depends
+       * on screen size *)
+      position : Point.t Param.t ;
+      (* An array of io_map_sz ^2 values output by this neuron for a range
+       * of input values. *)
+      io_map : float array array }
+
   let make_position id pos =
     Param.make ("position of neuron#"^ string_of_int id) pos
+
+  let make_io_map () =
+    Array.init io_map_sz (fun _ -> Array.make io_map_sz 0.)
+
+  let io_maps_update = Param.make "io_map should be refreshed" ()
 
   type ser_dendrit =
     { ser_source : int ; ser_weight : float ;
@@ -659,7 +692,8 @@ struct
     { id = s.ser_id ; layer = s.ser_layer ; output = s.ser_output ;
       dE_dOutput = 0. ; func = s.ser_func ; io_key = s.ser_io_key ;
       dendrits = [] ; axons = [] ; selected = false ;
-      position = make_position s.ser_id Point.origin }
+      position = make_position s.ser_id Point.origin ;
+      io_map = make_io_map () }
   let unserialize_dendrits neurons n s =
     n.dendrits <- List.map (unserialize_dendrit neurons) s.ser_dendrits
   let unserialize_axons neurons n s =
@@ -677,7 +711,8 @@ struct
     incr id_seq ;
     { id = !id_seq ; dendrits = [] ; axons = [] ; io_key ; layer ;
       selected = false ; position = make_position !id_seq position ;
-      func = Sigmoid ; output = 0. ; dE_dOutput = 0. }
+      func = Sigmoid ; output = 0. ; dE_dOutput = 0. ;
+      io_map = make_io_map () }
 
   (* List of neurons, that we recompute (conservatively) whenever
    * the net is changed. *)
@@ -873,10 +908,6 @@ struct
   let touch_hovered () = (* Used to redraw the neuron details *)
     Option.may (fun _ -> Param.change hovered) hovered.value
 
-  let io_history = 15
-  (* TODO: instead of output have one graph per incoming weight *)
-  let last_outputs = Param.make "last output into hovered neuron" ~on_update:touch_hovered (Graph.make "Out" io_history)
-
   let neuron_shape, neuron_bbox =
     let circle =
       Path.circle (K.of_int Layout.neuron_radius) |>
@@ -898,9 +929,8 @@ struct
         if is_hovered then color.(1) <- 0.9 ;
         let render = neuron_shape ~color in
         let on_hover _ =
-          if not is_hovered then (
-            Param.set hovered (Some t) ;
-            Graph.reset_param last_outputs)
+          if not is_hovered then
+            Param.set hovered (Some t)
         and on_click shifted _ =
           if shifted then (
             Format.printf "shift clicked neuron %d@." t.id;
@@ -1134,6 +1164,88 @@ struct
       fold_all (fun res neuron ->
         render neuron ~x ~y :: res) [])
 
+  let render_csv_value n ~x ~y ~width ~height =
+    match n.layer with
+    | Input ->
+      fun_of inputs (fun ios -> [
+        let io = find_io ios n.io_key in
+        let extr = CSV.get_extremum csv io in
+        let i, _curs = CSV.get_value csv io in
+        let i' = scale_input_rev n.func extr n.output in
+        fun_of io.col (fun col ->
+          let txt = csv.columns.(col) ^": "^ f2s i' ^" for "^ f2s i in
+          [ Widget.text txt ~x ~y ~width ~height ]) ])
+    | Output ->
+      fun_of outputs (fun ios -> [
+        let io = find_io ios n.io_key in
+        let extr = CSV.get_extremum csv io in
+        let t, _curs = CSV.get_value csv io in
+        let t' = scale_output_rev n.func extr n.output in
+        fun_of io.col (fun col ->
+          let txt = csv.columns.(col) ^": "^ f2s t' ^" for "^ f2s t in
+          [ Widget.text txt ~x ~y ~width ~height ]) ])
+    | Hidden -> group []
+
+  let selected_for_axis = Param.make "selected IO for IO map" (~-1, ~-1)
+  (* Make sure we have selected some axes as soon as we have inputs,
+   * and that we do not use deleted inputs: *)
+  let () = Param.on_update inputs (fun () ->
+    let ix, iy = selected_for_axis.value
+    and cx, cy = (* candidate values *)
+      match inputs.value with
+      | [] -> ~-1, ~-1
+      | [ i ] -> i.id, i.id
+      | i1 :: i2 :: _ -> i1.id, i2.id
+    and valid id =
+      id >= 0 && List.exists (fun (i : io) -> i.id = id) inputs.value
+    in
+    let ix = if valid ix then ix else cx
+    and iy = if valid iy then iy else cy in
+    if (ix, iy) <> selected_for_axis.value then
+      Param.set selected_for_axis (ix, iy))
+
+  type direction = Vertical | Horizontal
+  (* [width] and [height] are the coordinate of the whole surrounding rectangle
+   * and therefore are the same for both directions. *)
+  let render_io_choice but_width but_height ~dir ~x ~y ~width ~height =
+    fun_of inputs (fun inputs -> [
+      fun_of selected_for_axis (fun (sel_x, sel_y) ->
+        let nb_inputs = List.length inputs in
+        let dx, dy =
+          match dir with
+          | Vertical -> let d = height / (nb_inputs + 1) in 0, d
+          | Horizontal -> let d = width / (nb_inputs + 1) in d, 0 in
+        let rec loop buts x y i = function
+          | [] -> buts
+          | (input : io) :: inputs ->
+              let selected = input.id =
+                (match dir with Vertical -> sel_y | _ -> sel_x) in
+              let on_click =
+                if selected then None else Some (fun _ _ ->
+                  match dir with
+                  | Vertical ->
+                      Param.set selected_for_axis (sel_x, input.id)
+                  | Horizontal ->
+                      Param.set selected_for_axis (input.id, sel_y)) in
+              let but = Widget.button ~selected ?on_click (string_of_int i) ~x ~y ~width:but_width ~height:but_height in
+              loop (but :: buts) (x + dx) (y - dy) (i + 1) inputs in
+        let x = x + dx and y = y + nb_inputs * dy in
+        loop [] x y 1 (List.rev inputs)) ])
+
+  let render_io_map n ~x ~y ~width ~height =
+    let but_width = 15 and but_height = Layout.text_line_height in
+    group [
+      render_io_choice but_width but_height ~dir:Vertical ~x ~y ~width ~height ;
+      render_io_choice but_width but_height ~dir:Horizontal ~x ~y ~width ~height ;
+      (* io_map is an array of floats between 0 and 1, we must represent
+       * it as a heightmap. *)
+      fun_of io_maps_update (fun () -> [
+        Widget.heightmap n.io_map ~x:(x + but_width) ~y:(y + but_height)
+          ~width:(width - but_width) ~height:(height - but_height) ]) ]
+
+  let detailed_neuron hvd sel =
+    if hvd <> None then hvd else sel
+
   let render_neuron_details ~x ~y ~width ~height =
     (* TODO: also a map of one input to another displaying the output of this neuron according to those inputs.
      * Requires that we stop the simulation every N steps, then run a `recording` simulation phase during which
@@ -1141,44 +1253,19 @@ struct
      * back propagating of course!). Then we restart the sim as normal.
      * Those maps can also be used to display the neuron instead of the big dot. *)
     let render_details_of_neuron n =
-      let last_output = "Last Output:"^ f2s n.output in
-      let render_csv_value =
-        match n.layer with
-        | Input ->
-          fun_of inputs (fun ios -> [
-            let io = find_io ios n.io_key in
-            let extr = CSV.get_extremum csv io in
-            let i, _curs = CSV.get_value csv io in
-            let i' = scale_input_rev n.func extr n.output in
-            fun_of io.col (fun col ->
-              let txt = csv.columns.(col) ^": "^ f2s i' ^" for "^ f2s i in
-              [ Widget.text txt ~x ~y:(y + height - 4 * Layout.text_line_height) ~width ~height:Layout.text_line_height ]) ])
-        | Output ->
-          fun_of outputs (fun ios -> [
-            let io = find_io ios n.io_key in
-            let extr = CSV.get_extremum csv io in
-            let t, _curs = CSV.get_value csv io in
-            let t' = scale_output_rev n.func extr n.output in
-            fun_of io.col (fun col ->
-              let txt = csv.columns.(col) ^": "^ f2s t' ^" for "^ f2s t in
-              [ Widget.text txt ~x ~y:(y + height - 4 * Layout.text_line_height) ~width ~height:Layout.text_line_height ]) ])
-        | Hidden -> group []
-      in [
-        Widget.text ("Neuron "^ string_of_int n.id ^(if n.layer = Hidden then "("^ string_of_int n.io_key ^")" else "")) ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
+      [ Widget.text ("Neuron "^ string_of_int n.id ^(if n.layer = Hidden then "("^ string_of_int n.io_key ^")" else "")) ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
         Widget.text (string_of_int (List.length n.dendrits) ^"/"^ string_of_int (List.length n.axons) ^"cnx") ~x:(x + width/2) ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
         Widget.text (string_of_transfer n.func) ~x ~y:(y + height - 2 * Layout.text_line_height) ~width:(width/3) ~height:Layout.text_line_height ;
         Widget.text ("dE/dO="^ f2s n.dE_dOutput) ~x:(x + width/3) ~y:(y + height - 2 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
-        Widget.text last_output ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ;
-        render_csv_value ;
-        fun_of last_outputs (fun last_out -> [
-          Graph.render last_out ~x ~y ~width ~height:(height - 4 * Layout.text_line_height) ]) ]
+        Widget.text ("Last Output:"^ f2s n.output) ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ;
+        render_csv_value n ~x ~y:(y + height - 4 * Layout.text_line_height) ~width ~height:Layout.text_line_height ;
+        render_io_map n ~x ~y ~width ~height:(height - 4 * Layout.text_line_height) ];
     in
-    fun_of hovered (function
-      | None -> [
-        fun_of selected (function
-          | None -> []
-          | Some n -> render_details_of_neuron n) ]
-      | Some n -> render_details_of_neuron n)
+    fun_of hovered (fun hvd -> [
+      fun_of selected (fun sel ->
+        match detailed_neuron hvd sel with
+        | None -> []
+        | Some n -> render_details_of_neuron n) ])
 
   let render_all ~x ~y ~width ~height =
     fun_of Layout.control_column_width (fun control_width -> [
@@ -1257,7 +1344,8 @@ struct
     make_ s.ser_id s.ser_col s.ser_lag s.ser_avg
 
   let render_io_adder what ios_param ~x ~y ~width ~height =
-    Widget.button ("Add a new "^ what) ~on_click:(fun _ _ -> Param.cons ios_param (make ())) ~x ~y:(y + height - Layout.text_line_height) ~width ~height:Layout.text_line_height
+    let on_click _ _ = Param.cons ios_param (make ()) in
+    Widget.button ("Add a new "^ what) ~on_click ~x ~y:(y + height - Layout.text_line_height) ~width ~height:Layout.text_line_height
 
   let render_all title ios_param io_width ~x ~y ~width ~height =
     ignore width ;
@@ -1281,13 +1369,13 @@ struct
   let is_running = Param.make "simulation is running" false
   let rem_steps = ref 0
   let nb_steps = ref 0
+  let nb_batches = ref 0
   let minibatch_steps = ref 0
   let nb_steps_update = Param.make "nb_steps should be refreshed" () (* TODO: Param.make ~update_every:16 ? *)
   let tot_err_history = 150
   let tot_err_graph = Param.make "total error graph" (Graph.make "Error" tot_err_history)
 
-  (* inputs must be an array of input values, order by io_key. *)
-  let forward_propagation () =
+  let input_from_csv () =
     let open Neuron in
     iter_only Input (fun n ->
       let io = find_io inputs.value n.io_key in
@@ -1295,14 +1383,16 @@ struct
       and extr = CSV.get_extremum csv io in
       let o = scale_input n.func extr x in
       (* Note that we do *not* go through the transfer function itself.
-       * We just use its type to scale. If we did, than for sigmoids the
+       * We just use its type to scale. If we did, then for sigmoids the
        * output would be 0..1 which would be biased right from the start.
        * So better not.
        * Therefore, set the transfer function of the input neurons just
        * to control the scaling. If you mix different transfer function
        * in your network you are on your own. *)
-      n.output <- o
-      ) ;
+      n.output <- o)
+
+  let forward_propagation () =
+    let open Neuron in
     iter_all (fun n ->
       (* If there is no dendrit keep current output (for biases and input neurons) *)
       if n.dendrits <> [] then
@@ -1310,12 +1400,7 @@ struct
           List.fold_left (fun s d ->
             s +. d.source.output *. d.weight
           ) 0. n.dendrits |>
-          transfer n.func ;
-      match hovered.value with
-      | Some hn when hn == n ->
-          Graph.push last_outputs.value n.output ;
-          Param.change last_outputs
-      | _ -> ())
+          transfer n.func)
 
   let accum_gradient n =
     let open Neuron in
@@ -1378,6 +1463,42 @@ struct
       let open Neuron in
       iter_all (adjust_dendrits learn_speed momentum)
 
+  let refresh_io_map () =
+    let open Neuron in
+    (* Grab the inputs of interest: *)
+    let idx, idy = selected_for_axis.value in
+    (* Now grab the input neurons, and set all other input neurons
+     * to 0: *)
+    match fold_only Input (fun (nx, ny as prev) n ->
+        if n.io_key <> idx && n.io_key <> idy then (
+          n.output <- 0. ;
+          prev
+        ) else (
+          (if n.io_key = idx then Some n else nx),
+          (if n.io_key = idy then Some n else ny))
+      ) (None, None) with
+    | None, _ | _, None -> ()
+    | Some nx, Some ny ->
+      (* Now iter from one extremum to the other for inx and iny: *)
+      let default_range = ~-.1., 1. in
+      let miny, maxy = x_range ny.func |? default_range  (* yes x_range (should be input_range) *)
+      and minx, maxx = x_range nx.func |? default_range  in
+      for y = 0 to io_map_sz - 1 do
+        ny.output <-
+          miny +. (maxy -. miny) *. i2f y /. i2f (io_map_sz - 1) ;
+        for x = 0 to io_map_sz - 1 do
+          nx.output <-
+            minx +. (maxx -. minx) *. i2f x /. i2f (io_map_sz - 1) ;
+          (* Propagate *)
+          forward_propagation () ;
+          (* Record the value for all neurons *)
+          iter_all (fun n ->
+            let vmin, vmax = y_range n.func |? default_range in
+            n.io_map.(y).(x) <- (n.output -. vmin) /. (vmax -. vmin))
+        done
+      done ;
+      Param.change io_maps_update
+
   let learn_speed = Param.make "learning speed" 0.03
   let momentum = Param.make "momentum" 0.
   let minibatch_size = Param.make "minibatch size" 1
@@ -1385,13 +1506,18 @@ struct
   let step () =
     if is_running.value then (
       CSV.next csv ;
+      input_from_csv () ;
       forward_propagation () ;
       let tot_err = back_propagation () in
 
       incr minibatch_steps ;
       if !minibatch_steps >= minibatch_size.value then (
         adjust_weights learn_speed.value momentum.value ;
-        minibatch_steps := 0) ;
+        minibatch_steps := 0 ;
+        incr nb_batches ;
+        (* Refresh the dendrits from time to time: *)
+        if !nb_batches land 7 = 0 then
+          Param.change Neuron.neurons) ;
       Graph.push tot_err_graph.value tot_err ;
 
       Param.change tot_err_graph ;
@@ -1400,10 +1526,11 @@ struct
       decr rem_steps ;
       incr nb_steps ;
       if !rem_steps = 0 then Param.set is_running false ;
-      (* Refresh the dendrits width from time to time: *)
-      if !rem_steps land 15 = 0 then (
-        Param.change Neuron.neurons ;
-        Param.change nb_steps_update))
+      (* Refresh number of steps from time to time: *)
+      if !nb_steps land 15 = 0 || !rem_steps = 0 then
+        Param.change nb_steps_update ;
+      if !nb_steps land 31 = 0 || !rem_steps = 0 then
+        refresh_io_map ())
 end
 
 module LoadSave =
@@ -1521,7 +1648,6 @@ let render_result_controls ~x ~y ~width ~height =
             d.Neuron.prev_weight_adj <- 0. ;
             d.Neuron.gradient <- 0.
           ) n.dendrits) ;
-        Graph.reset_param Neuron.last_outputs ;
         Graph.reset_param Simulation.tot_err_graph ;
         Param.change Neuron.neurons ;
         CSV.reset csv ;
