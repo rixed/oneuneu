@@ -175,8 +175,9 @@ struct
     if dx < 0.45 then -1 else
     if dx > 0.55 then +1 else 0
 
-  let simple_select options param ~x ~y ~width ~height =
-    if Array.length options = 0 then
+  let simple_select ?(wrap=false) options param ~x ~y ~width ~height =
+    let max_idx = Array.length options - 1 in
+    if max_idx < 0 then
       button "(empty)" ~x ~y ~width ~height
     else fun_of param (fun selected ->
       let cur_idx, label =
@@ -191,14 +192,23 @@ struct
         else
           let new_idx =
             cur_idx + click_left_right ~x ~width pos in
-          let new_idx = Lr44.pos_mod new_idx (Array.length options) in
+          let new_idx =
+            if new_idx <= max_idx then new_idx else
+              if wrap then 0 else max_idx in
+          let new_idx =
+            if new_idx >= 0 then new_idx else
+              if wrap then max_idx else 0 in
           if new_idx <> cur_idx then
             Param.set param (options.(new_idx) |> fst)
       in
       let arrow_w = 10 and label = "  "^ label in
       [ button label ~on_click ~x ~y ~width ~height ;
-        text "‹" ~x ~y ~width:arrow_w ~height ;
-        text "›" ~x:(x + width - arrow_w) ~y ~width:arrow_w ~height ])
+        (if wrap || cur_idx > 0 then
+          text "‹" ~x ~y ~width:arrow_w ~height
+        else group []) ;
+        (if wrap || cur_idx < max_idx - 1 then
+          text "›" ~x:(x + width - arrow_w) ~y ~width:arrow_w ~height
+        else group []) ])
 
   let int_select ?(min=0) ?(max=max_int) ?(wrap=false) param ~x ~y ~width ~height =
     if min > max then
@@ -219,10 +229,10 @@ struct
       let label = "  "^ string_of_int selected
       and arrow_w = 10 in
       [ button label ~on_click ~x ~y ~width ~height ;
-        (if selected > min then
+        (if wrap || selected > min then
           text "‹" ~x ~y ~width:arrow_w ~height
         else group []) ;
-        (if selected < max then
+        (if wrap || selected < max then
           text "›" ~x:(x + width - arrow_w) ~y ~width:arrow_w ~height
         else group []) ])
 end
