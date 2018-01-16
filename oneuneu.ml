@@ -274,6 +274,14 @@ struct
     { columns ; lines ; predictions ; min_tot_err = max_float ; naive_err ;
       name ; extremums ; shuffling ; shuffling_idx = 0 ; idx = shuffling.(0) }
 
+  let reset csv =
+    for l = 0 to Array.length csv.predictions - 1 do
+      for c = 0 to Array.length csv.predictions.(l) - 1 do
+        csv.predictions.(l).(c) <- None
+      done
+    done ;
+    csv.min_tot_err <- max_float
+
   let random_walk () =
     let nb_cols = 4 + Random.int 4
     and nb_lines = 40 + Random.int 100 in
@@ -1458,6 +1466,7 @@ let render_result_controls ~x ~y ~width ~height =
         Graph.reset_param Neuron.last_outputs ;
         Graph.reset_param Simulation.tot_err_graph ;
         Param.change Neuron.neurons ;
+        CSV.reset csv ;
         Simulation.nb_steps := 0 ;
         Param.change Simulation.nb_steps_update)
     and y = y + height - 2 * Layout.text_line_height and height = Layout.text_line_height in
