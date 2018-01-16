@@ -604,6 +604,7 @@ struct
   type dendrit =
     { source : t ;
       mutable weight : float ;
+      mutable gradient : float (* accumulated during mini-batches *) ;
       mutable prev_weight_adj : float (* for momentum *) }
   and axon =
     { dest : t ;
@@ -648,6 +649,7 @@ struct
   (* We must unserialize all neurons first, then all dendrits, then all axons. *)
   let unserialize_dendrit neurons s =
     { weight = s.ser_weight ; prev_weight_adj = s.ser_prev_weight_adj ;
+      gradient = 0. (* restart from start of mini-batch *) ;
       source = Array.find (fun n -> n.id = s.ser_source) neurons }
   let unserialize_axon neurons s =
     let dest = Array.find (fun n -> n.id = s.ser_dest) neurons in
@@ -668,7 +670,7 @@ struct
     (Random.float 1. -. 0.5) *. init_weight_amplitude
 
   let dendrit source =
-    { source ; weight = random_weight () ; prev_weight_adj = 0. }
+    { source ; weight = random_weight () ; gradient = 0. ; prev_weight_adj = 0. }
 
   let id_seq = ref 0
   let make io_key layer position =
@@ -1279,6 +1281,7 @@ struct
   let is_running = Param.make "simulation is running" false
   let rem_steps = ref 0
   let nb_steps = ref 0
+  let minibatch_steps = ref 0
   let nb_steps_update = Param.make "nb_steps should be refreshed" () (* TODO: Param.make ~update_every:16 ? *)
   let tot_err_history = 150
   let tot_err_graph = Param.make "total error graph" (Graph.make "Error" tot_err_history)
@@ -1314,13 +1317,20 @@ struct
           Param.change last_outputs
       | _ -> ())
 
-  let adjust_weight learn_speed momentum n =
+  let accum_gradient n =
     let open Neuron in
     List.iter (fun d ->
         let de_dw = d.source.output *. n.dE_dOutput in
-        let adj = momentum *. d.prev_weight_adj -. learn_speed *. de_dw in
+        d.gradient <- d.gradient +. de_dw ;
+      ) n.dendrits
+
+  let adjust_dendrits learn_speed momentum n =
+    let open Neuron in
+    List.iter (fun d ->
+        let adj = momentum *. d.prev_weight_adj -. learn_speed *. d.gradient in
         d.weight <- d.weight +. adj ;
-        d.prev_weight_adj <- adj
+        d.prev_weight_adj <- adj ;
+        d.gradient <- 0.
       ) n.dendrits
 
   (* Assuming we know how n's children influence the error (dE_dOutput),
@@ -1339,7 +1349,7 @@ struct
    * each output neuron, in io_key order. *)
   (* TODO: choose various methods (momentum, resilient back prop...
    * see https://en.wikipedia.org/wiki/Rprop *)
-  let back_propagation learn_speed momentum =
+  let back_propagation () =
     let open Neuron in
     (* Begin with setting the dE_dOutput of the output nodes.
      * While at it, also save the prediction in the CSV. *)
@@ -1359,19 +1369,29 @@ struct
       ) (0., 0) in
     (* Now we can back-propagate to the hidden layer *)
     iter_back_but Output propagate_err_backward ;
-    (* Adjust the weights *)
-    iter_all (adjust_weight learn_speed momentum) ;
+    (* Accumulate the gradient *)
+    iter_all accum_gradient ;
     (* Returns the total error *)
     tot_err
 
+  let adjust_weights learn_speed momentum =
+      let open Neuron in
+      iter_all (adjust_dendrits learn_speed momentum)
+
   let learn_speed = Param.make "learning speed" 0.03
   let momentum = Param.make "momentum" 0.
+  let minibatch_size = Param.make "minibatch size" 1
 
   let step () =
     if is_running.value then (
       CSV.next csv ;
       forward_propagation () ;
-      let tot_err = back_propagation learn_speed.value momentum.value in
+      let tot_err = back_propagation () in
+
+      incr minibatch_steps ;
+      if !minibatch_steps >= minibatch_size.value then (
+        adjust_weights learn_speed.value momentum.value ;
+        minibatch_steps := 0) ;
       Graph.push tot_err_graph.value tot_err ;
 
       Param.change tot_err_graph ;
@@ -1392,6 +1412,7 @@ struct
     Marshal.output oc !IO.id_seq ;
     Marshal.output oc !Neuron.id_seq ;
     Marshal.output oc !Simulation.nb_steps ;
+    Marshal.output oc Simulation.minibatch_size.value ;
     Marshal.output oc Simulation.learn_speed.value ;
     Marshal.output oc Simulation.momentum.value ;
     Marshal.output oc (List.map IO.serialize inputs.value) ;
@@ -1402,6 +1423,7 @@ struct
     IO.id_seq := Marshal.input ic ;
     Neuron.id_seq := Marshal.input ic ;
     Simulation.nb_steps := Marshal.input ic ;
+    Param.set Simulation.minibatch_size (Marshal.input ic) ;
     Param.set Simulation.learn_speed (Marshal.input ic) ;
     Param.set Simulation.momentum (Marshal.input ic) ;
     Param.set inputs (List.map IO.unserialize (Marshal.input ic)) ;
@@ -1462,7 +1484,10 @@ let render_result_controls ~x ~y ~width ~height =
   and momentum_options =
     [| 0., "0" ; 0.1, "0.1" ; 0.5, "0.5" ;
        0.9, "0.9" ; 0.95, "0.95" ; 0.99, "0.99" |]
-  and label_w = 80 in [
+  and minibatch_options =
+    [| 1, "1" ; 10, "10" ; 100, "100" ; 1_000, "1,000" ;
+       10_000, "10,000" ; 100_000_000, "100,000,000" |]
+  and label_w = 90 in [
   fun_of need_save (fun need_save ->
     if need_save then
       [ Widget.button "Save" ~on_click:LoadSave.save ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width / 2) ~height:Layout.text_line_height ]
@@ -1477,7 +1502,8 @@ let render_result_controls ~x ~y ~width ~height =
         Neuron.iter_all (fun n ->
           List.iter (fun d ->
             d.Neuron.weight <- Neuron.random_weight () ;
-            d.Neuron.prev_weight_adj <- 0.
+            d.Neuron.prev_weight_adj <- 0. ;
+            d.Neuron.gradient <- 0.
           ) n.dendrits) ;
         Graph.reset_param Neuron.last_outputs ;
         Graph.reset_param Simulation.tot_err_graph ;
@@ -1494,10 +1520,12 @@ let render_result_controls ~x ~y ~width ~height =
         Widget.button "Reset!" ~on_click:reset ~x:(2 * width/3) ~y ~width:(width/3) ~height ]) ;
   fun_of Simulation.nb_steps_update (fun _ -> [
     Widget.text ("Steps: "^ string_of_int !Simulation.nb_steps) ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ]) ;
-  Widget.text "Learn.Rate:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
-  Widget.simple_select learn_speed_options Simulation.learn_speed ~x:(x + label_w) ~y:(y + height - 4 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
-  Widget.text "Momentum:" ~x ~y:(y + height - 5 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
-  Widget.simple_select momentum_options Simulation.momentum ~x:(x + label_w) ~y:(y + height - 5 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ]
+  Widget.text "Minibatches:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.simple_select minibatch_options Simulation.minibatch_size ~x:(x + label_w) ~y:(y + height - 4 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
+  Widget.text "Learn.Rate:" ~x ~y:(y + height - 5 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.simple_select learn_speed_options Simulation.learn_speed ~x:(x + label_w) ~y:(y + height - 5 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
+  Widget.text "Momentum:" ~x ~y:(y + height - 6 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.simple_select momentum_options Simulation.momentum ~x:(x + label_w) ~y:(y + height - 6 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ]
 
 let render_results ~x ~y ~width ~height =
   fun_of Layout.control_column_width (fun control_width -> [
