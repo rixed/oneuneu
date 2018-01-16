@@ -684,18 +684,18 @@ struct
    * non-savable changes such as selection changes *)
 
   (* Sort according to layer for signal propagation *)
-  let sort_neurons neurons =
+  let compare n1 n2 =
     let order_of_layer = function
       Input -> 0 | Hidden -> 1 | Output -> 2 in
-    let compare_layer n1 n2 =
-      Int.compare (order_of_layer n1.layer) (order_of_layer n2.layer) in
-    Array.fast_sort (fun n1 n2 ->
-      match compare_layer n1 n2 with
-      | 0 ->
-          (match Int.compare n1.io_key n2.io_key with
-          | 0 -> Int.compare n1.id n2.id
-          | c -> c)
-      | c -> c) neurons
+    match Int.compare (order_of_layer n1.layer)
+                      (order_of_layer n2.layer) with
+    | 0 ->
+        (match Int.compare n1.io_key n2.io_key with
+        | 0 -> Int.compare n1.id n2.id
+        | c -> c)
+    | c -> c
+
+  let sort_neurons = Array.fast_sort compare
 
   (* This changes whenever the selection changes *)
   let selection_generation = Param.make "selection generation" 0
@@ -844,7 +844,7 @@ struct
         let y = i2f Layout.neural_net_height.value -. i2f (new_depth + 1) *. dy in
         let dx = i2f Layout.(screen_width.value - control_column_width.value) /.
                  i2f (nb_neurons + 1) in
-        List.fast_sort (fun n1 n2 -> compare n1.id n2.id) neurons |>
+        List.fast_sort (fun n1 n2 -> Int.compare n1.id n2.id) neurons |>
         List.iteri (fun i n ->
           n.io_key <- new_depth ;
           let disp = 7. and a = i2f n.id in
@@ -1330,9 +1330,10 @@ struct
     n.dE_dOutput <-
       transfer' n.func n.output *.
       List.fold_left (fun s a ->
-          s +. a.dendrit.weight *. a.dest.dE_dOutput
-        ) 0. n.axons ;
-    assert (compare nan n.dE_dOutput <> 0)
+        assert (compare n a.dest < 0) ;
+        s +. a.dendrit.weight *. a.dest.dE_dOutput
+      ) 0. n.axons ;
+    assert (Float.compare nan n.dE_dOutput <> 0)
 
   (* [outputs] must be a float array with the output targets for
    * each output neuron, in io_key order. *)
@@ -1351,7 +1352,7 @@ struct
          * transfer function of output neurons. *)
         let r = scale_output_rev n.func extr n.output in
         n.dE_dOutput <- (r -. t) /. (snd extr -. fst extr) ;
-        assert (compare nan n.dE_dOutput <> 0) ;
+        assert (Float.compare nan n.dE_dOutput <> 0) ;
         CSV.predict csv cursor r ;
         e +. 0.5 *. sq n.dE_dOutput,
         i + 1
