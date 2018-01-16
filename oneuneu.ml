@@ -601,8 +601,13 @@ struct
 
   type layer = Input | Hidden | Output
 
-  type dendrit = { source : t ; mutable weight : float }
-  and axon = { dest : t ; dendrit : dendrit }
+  type dendrit =
+    { source : t ;
+      mutable weight : float ;
+      mutable prev_weight_adj : float (* for momentum *) }
+  and axon =
+    { dest : t ;
+      dendrit : dendrit }
   and t =
     { id : int ;
       layer : layer ;
@@ -617,8 +622,11 @@ struct
   let make_position id pos =
     Param.make ("position of neuron#"^ string_of_int id) pos
 
-  type ser_dendrit = { ser_source : int ; ser_weight : float }
-  type ser_axon = { ser_dest : int ; ser_dendrit : int }
+  type ser_dendrit =
+    { ser_source : int ; ser_weight : float ;
+      ser_prev_weight_adj : float }
+  type ser_axon =
+    { ser_dest : int ; ser_dendrit : int }
   type serialized_neuron =
     { ser_id : int ; ser_layer : layer ;
       ser_output : float ; ser_func : transfer ;
@@ -626,7 +634,9 @@ struct
       ser_axons : ser_axon list }
 
   let serialize_dendrit d =
-    { ser_source = d.source.id ; ser_weight = d.weight }
+    { ser_source = d.source.id ;
+      ser_weight = d.weight ;
+      ser_prev_weight_adj = d.prev_weight_adj }
   let serialize_axon n a =
     { ser_dest = a.dest.id ;
       ser_dendrit = List.findi (fun _ d -> d.source == n) a.dest.dendrits |> fst }
@@ -637,7 +647,7 @@ struct
       ser_axons = List.map (serialize_axon n) n.axons }
   (* We must unserialize all neurons first, then all dendrits, then all axons. *)
   let unserialize_dendrit neurons s =
-    { weight = s.ser_weight ;
+    { weight = s.ser_weight ; prev_weight_adj = s.ser_prev_weight_adj ;
       source = Array.find (fun n -> n.id = s.ser_source) neurons }
   let unserialize_axon neurons s =
     let dest = Array.find (fun n -> n.id = s.ser_dest) neurons in
@@ -658,7 +668,7 @@ struct
     (Random.float 1. -. 0.5) *. init_weight_amplitude
 
   let dendrit source =
-    { source ; weight = random_weight () }
+    { source ; weight = random_weight () ; prev_weight_adj = 0. }
 
   let id_seq = ref 0
   let make io_key layer position =
@@ -1304,26 +1314,14 @@ struct
           Param.change last_outputs
       | _ -> ())
 
-  (* Now that we know how this neuron influences the error, adjust each of
-   * the weight to move the error toward zero.
-
-     TODO: try to add momentum, ie instead of changing the weights change the
-     speed at which the weights change.
-
-     TODO: alternatively, have a learning speed per neuron or per weight. *)
-  let adjust_weight learn_speed n =
+  let adjust_weight learn_speed momentum n =
     let open Neuron in
     List.iter (fun d ->
         let de_dw = d.source.output *. n.dE_dOutput in
-        d.weight <- d.weight -. learn_speed *. de_dw
+        let adj = momentum *. d.prev_weight_adj -. learn_speed *. de_dw in
+        d.weight <- d.weight +. adj ;
+        d.prev_weight_adj <- adj
       ) n.dendrits
-(* TODO: Idea: we might have plenty of bad neurons that are not making much
- * progress while still being far from the global minimum. We might want to
- * recognize them: their value changes very slowly, always in the same
- * direction.  Or, alternatively, the amplitude of the explored values is small
- * compared to others.  We might want to, once in a while, shake all their
- * weight at random to force the exploration of another part of the weight
- * space. *)
 
   (* Assuming we know how n's children influence the error (dE_dOutput),
    * compute its own output influences the error. *)
@@ -1340,7 +1338,7 @@ struct
    * each output neuron, in io_key order. *)
   (* TODO: choose various methods (momentum, resilient back prop...
    * see https://en.wikipedia.org/wiki/Rprop *)
-  let back_propagation learn_speed =
+  let back_propagation learn_speed momentum =
     let open Neuron in
     (* Begin with setting the dE_dOutput of the output nodes.
      * While at it, also save the prediction in the CSV. *)
@@ -1361,17 +1359,18 @@ struct
     (* Now we can back-propagate to the hidden layer *)
     iter_back_but Output propagate_err_backward ;
     (* Adjust the weights *)
-    iter_all (adjust_weight learn_speed) ;
+    iter_all (adjust_weight learn_speed momentum) ;
     (* Returns the total error *)
     tot_err
 
   let learn_speed = Param.make "learning speed" 0.03
+  let momentum = Param.make "momentum" 0.
 
   let step () =
     if is_running.value then (
       CSV.next csv ;
       forward_propagation () ;
-      let tot_err = back_propagation learn_speed.value in
+      let tot_err = back_propagation learn_speed.value momentum.value in
       Graph.push tot_err_graph.value tot_err ;
 
       Param.change tot_err_graph ;
@@ -1393,6 +1392,7 @@ struct
     Marshal.output oc !Neuron.id_seq ;
     Marshal.output oc !Simulation.nb_steps ;
     Marshal.output oc Simulation.learn_speed.value ;
+    Marshal.output oc Simulation.momentum.value ;
     Marshal.output oc (List.map IO.serialize inputs.value) ;
     Marshal.output oc (List.map IO.serialize outputs.value) ;
     Marshal.output oc (Array.map Neuron.serialize Neuron.neurons.value)
@@ -1402,6 +1402,7 @@ struct
     Neuron.id_seq := Marshal.input ic ;
     Simulation.nb_steps := Marshal.input ic ;
     Param.set Simulation.learn_speed (Marshal.input ic) ;
+    Param.set Simulation.momentum (Marshal.input ic) ;
     Param.set inputs (List.map IO.unserialize (Marshal.input ic)) ;
     Param.set outputs (List.map IO.unserialize (Marshal.input ic)) ;
     let ser_neurons = Marshal.input ic in
@@ -1457,7 +1458,10 @@ let render_result_controls ~x ~y ~width ~height =
     [| 0.00001, "0.00001" ; 0.0001, "0.0001" ; 0.001, "0.001" ;
        0.003, "0.003" ; 0.01, "0.01" ; 0.03, "0.03" ; 0.1, "0.1" ;
        0.3, "0.3" ; 1., "1" ; 3., "3" ; 10., "10" |]
-  and learn_speed_label_w = 70 in [
+  and momentum_options =
+    [| 0., "0" ; 0.1, "0.1" ; 0.5, "0.5" ;
+       0.9, "0.9" ; 0.95, "0.95" ; 0.99, "0.99" |]
+  and label_w = 80 in [
   fun_of need_save (fun need_save ->
     if need_save then
       [ Widget.button "Save" ~on_click:LoadSave.save ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width / 2) ~height:Layout.text_line_height ]
@@ -1471,7 +1475,8 @@ let render_result_controls ~x ~y ~width ~height =
       if shifted then (
         Neuron.iter_all (fun n ->
           List.iter (fun d ->
-            d.Neuron.weight <- Neuron.random_weight ()
+            d.Neuron.weight <- Neuron.random_weight () ;
+            d.Neuron.prev_weight_adj <- 0.
           ) n.dendrits) ;
         Graph.reset_param Neuron.last_outputs ;
         Graph.reset_param Simulation.tot_err_graph ;
@@ -1488,8 +1493,10 @@ let render_result_controls ~x ~y ~width ~height =
         Widget.button "Reset!" ~on_click:reset ~x:(2 * width/3) ~y ~width:(width/3) ~height ]) ;
   fun_of Simulation.nb_steps_update (fun _ -> [
     Widget.text ("Steps: "^ string_of_int !Simulation.nb_steps) ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ]) ;
-  Widget.text "Learn.Rate:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:learn_speed_label_w ~height:Layout.text_line_height ;
-  Widget.simple_select learn_speed_options Simulation.learn_speed ~x:(x + learn_speed_label_w) ~y:(y + height - 4 * Layout.text_line_height) ~width:(width - learn_speed_label_w) ~height:Layout.text_line_height ]
+  Widget.text "Learn.Rate:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.simple_select learn_speed_options Simulation.learn_speed ~x:(x + label_w) ~y:(y + height - 4 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
+  Widget.text "Momentum:" ~x ~y:(y + height - 5 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.simple_select momentum_options Simulation.momentum ~x:(x + label_w) ~y:(y + height - 5 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ]
 
 let render_results ~x ~y ~width ~height =
   fun_of Layout.control_column_width (fun control_width -> [
