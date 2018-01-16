@@ -632,7 +632,7 @@ struct
     { dest : t ;
       dendrit : dendrit }
   and t =
-    { id : int ;
+    { id : int ; (* TODO: We could probably get away with physical equality for neurons. *)
       layer : layer ;
       mutable output : float ;
       mutable dE_dOutput : float ;
@@ -714,6 +714,15 @@ struct
       func = Sigmoid ; output = 0. ; dE_dOutput = 0. ;
       io_map = make_io_map () }
 
+  let reset n =
+    List.iter (fun d ->
+      d.weight <- random_weight () ;
+      d.prev_weight_adj <- 0. ;
+      d.gradient <- 0.
+    ) n.dendrits ;
+    n.dE_dOutput <- 0. ;
+    Array.iter (fun y -> Array.iteri (fun i _ -> y.(i) <- 0.) y) n.io_map
+
   (* List of neurons, that we recompute (conservatively) whenever
    * the net is changed. *)
   let neurons = Param.make ~on_update:set_need_save "neurons" [||]
@@ -786,8 +795,8 @@ struct
   let disconnect ~from ~to_ =
     from.axons <-
       List.filter (fun a -> a.dest.id <> to_.id) from.axons ;
-    to_.dendrits <-
-      List.filter (fun d -> d.source.id <> from.id) to_.dendrits
+    from.dendrits <-
+      List.filter (fun d -> d.source.id <> to_.id) from.dendrits
 
   let disconnect_from others from =
     List.iter (fun to_ -> disconnect ~from:from ~to_:to_) others
@@ -1575,6 +1584,7 @@ struct
     let neurons = Array.map Neuron.unserialize0 t.neurons in
     Array.iter2 (Neuron.unserialize_dendrits neurons) neurons t.neurons ;
     Array.iter2 (Neuron.unserialize_axons neurons) neurons t.neurons ;
+    Neuron.sort_neurons neurons ;
     Param.set Neuron.neurons neurons
 
   let file_prefix = csv.name ^".save."
@@ -1616,6 +1626,7 @@ struct
         File.with_file_in f load_info ;
         Param.set need_save false ;
         Param.incr Neuron.selection_generation ;
+        Simulation.minibatch_steps := 0 ;
         Param.change Layout.neural_net_height (* trigger the rearrangement of neurons *)))
 end
 
@@ -1635,23 +1646,19 @@ let render_result_controls ~x ~y ~width ~height =
     if need_save then
       [ Widget.button "Save" ~on_click:LoadSave.save ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width / 2) ~height:Layout.text_line_height ]
     else []) ;
-  Widget.button "Load" ~on_click:LoadSave.load ~x:(width / 2) ~y:(y + height - 1 * Layout.text_line_height) ~width:(width / 2) ~height:Layout.text_line_height ;
+  Widget.button ("Load"^ (if Array.length Neuron.neurons.value > 0 then "!" else "")) ~on_click:LoadSave.load ~x:(width / 2) ~y:(y + height - 1 * Layout.text_line_height) ~width:(width / 2) ~height:Layout.text_line_height ;
   fun_of Simulation.is_running (fun is_running ->
     let run_for n _ _ =
       Param.set Simulation.is_running (n > 0) ;
       Simulation.rem_steps := n
     and reset shifted _ =
       if shifted then (
-        Neuron.iter_all (fun n ->
-          List.iter (fun d ->
-            d.Neuron.weight <- Neuron.random_weight () ;
-            d.Neuron.prev_weight_adj <- 0. ;
-            d.Neuron.gradient <- 0.
-          ) n.dendrits) ;
+        Neuron.iter_all Neuron.reset ;
         Graph.reset_param Simulation.tot_err_graph ;
         Param.change Neuron.neurons ;
         CSV.reset csv ;
         Simulation.nb_steps := 0 ;
+        Simulation.minibatch_steps := 0 ;
         Param.change Simulation.nb_steps_update)
     and y = y + height - 2 * Layout.text_line_height and height = Layout.text_line_height in
     if is_running then [
@@ -1664,7 +1671,7 @@ let render_result_controls ~x ~y ~width ~height =
     Widget.text ("Steps: "^ string_of_int !Simulation.nb_steps) ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ]) ;
   Widget.text "Minibatches:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
   Widget.simple_select minibatch_options Simulation.minibatch_size ~x:(x + label_w) ~y:(y + height - 4 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
-  Widget.text "Learn.Rate:" ~x ~y:(y + height - 5 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.text "Learn Rate:" ~x ~y:(y + height - 5 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
   Widget.simple_select learn_speed_options Simulation.learn_speed ~x:(x + label_w) ~y:(y + height - 5 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
   Widget.text "Momentum:" ~x ~y:(y + height - 6 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
   Widget.simple_select momentum_options Simulation.momentum ~x:(x + label_w) ~y:(y + height - 6 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ]
