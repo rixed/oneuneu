@@ -14,7 +14,7 @@ all: oneuneu
 
 doc: README.html
 
-PACKAGES = batteries,ogli
+PACKAGES = batteries,ogli,ppp
 
 oneuneu: ONeuNeuConfig.cmx oneuneu.cmx
 	$(OCAMLOPT) $(OCAMLOPTFLAGS) -package "$(PACKAGES)" -linkpkg -o $@ $^

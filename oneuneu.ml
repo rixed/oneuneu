@@ -13,7 +13,7 @@ let f2s v = Printf.sprintf "%+.3f" v
 let sq x = x *. x
 let sigmoid x = 1. /. ((exp ~-.x) +. 1.)
 
-type transfer = Sigmoid | TanHyp | Linear
+type transfer = Sigmoid | TanHyp | Linear [@@ppp PPP_JSON]
 let string_of_transfer = function
   | Sigmoid -> "sigmoid"
   | TanHyp  -> "hyp.tang."
@@ -599,7 +599,7 @@ struct
    * controllers are updated, conservatively. Neurons position is allowed to change while the neuron id and internal states do not change,
    * though. *)
 
-  type layer = Input | Hidden | Output
+  type layer = Input | Hidden | Output [@@ppp PPP_JSON]
 
   type dendrit =
     { source : t ;
@@ -625,14 +625,14 @@ struct
 
   type ser_dendrit =
     { ser_source : int ; ser_weight : float ;
-      ser_prev_weight_adj : float }
+      ser_prev_weight_adj : float [@ppp_default 0.] } [@@ppp PPP_JSON]
   type ser_axon =
-    { ser_dest : int ; ser_dendrit : int }
+    { ser_dest : int ; ser_dendrit : int } [@@ppp PPP_JSON]
   type serialized_neuron =
     { ser_id : int ; ser_layer : layer ;
       ser_output : float ; ser_func : transfer ;
       ser_io_key : int ; ser_dendrits : ser_dendrit list ;
-      ser_axons : ser_axon list }
+      ser_axons : ser_axon list } [@@ppp PPP_JSON]
 
   let serialize_dendrit d =
     { ser_source = d.source.id ;
@@ -1250,7 +1250,7 @@ struct
 
   (* Avoid functionals in the serialization: *)
   type serialized_io =
-    { ser_id : int ; ser_col : int ; ser_lag : int ; ser_avg : int }
+    { ser_id : int ; ser_col : int ; ser_lag : int [@ppp_default 0] ; ser_avg : int [@ppp_default 0] } [@@ppp PPP_JSON]
   let serialize io =
     { ser_id = io.id ; ser_col = io.col.value ; ser_lag = io.lag.value ; ser_avg = io.avg.value }
   let unserialize s =
@@ -1408,30 +1408,46 @@ end
 
 module LoadSave =
 struct
+  type t =
+    { io_id_seq : int [@ppp_default 0] ;
+      neuron_id_seq : int [@ppp_default 0] ;
+      nb_steps : int [@ppp_default 0] ;
+      minibatch_size : int [@ppp_default 1] ;
+      momentum : float [@ppp_default 0.] ;
+      learn_speed : float [@ppp_default 0.03] ;
+      inputs : IO.serialized_io list ;
+      outputs : IO.serialized_io list ;
+      neurons : Neuron.serialized_neuron array } [@@ppp PPP_JSON]
+
+  let make () =
+    { io_id_seq = !IO.id_seq ;
+      neuron_id_seq = !Neuron.id_seq ;
+      nb_steps = !Simulation.nb_steps ;
+      minibatch_size = Simulation.minibatch_size.value ;
+      momentum = Simulation.momentum.value ;
+      learn_speed = Simulation.learn_speed.value ;
+      inputs = List.map IO.serialize inputs.value ;
+      outputs = List.map IO.serialize outputs.value ;
+      neurons = Array.map Neuron.serialize Neuron.neurons.value }
+
   let save_info oc =
-    Marshal.output oc !IO.id_seq ;
-    Marshal.output oc !Neuron.id_seq ;
-    Marshal.output oc !Simulation.nb_steps ;
-    Marshal.output oc Simulation.minibatch_size.value ;
-    Marshal.output oc Simulation.learn_speed.value ;
-    Marshal.output oc Simulation.momentum.value ;
-    Marshal.output oc (List.map IO.serialize inputs.value) ;
-    Marshal.output oc (List.map IO.serialize outputs.value) ;
-    Marshal.output oc (Array.map Neuron.serialize Neuron.neurons.value)
+    make () |>
+    PPP.to_string t_ppp |>
+    Printf.fprintf oc "%s\n"
 
   let load_info ic =
-    IO.id_seq := Marshal.input ic ;
-    Neuron.id_seq := Marshal.input ic ;
-    Simulation.nb_steps := Marshal.input ic ;
-    Param.set Simulation.minibatch_size (Marshal.input ic) ;
-    Param.set Simulation.learn_speed (Marshal.input ic) ;
-    Param.set Simulation.momentum (Marshal.input ic) ;
-    Param.set inputs (List.map IO.unserialize (Marshal.input ic)) ;
-    Param.set outputs (List.map IO.unserialize (Marshal.input ic)) ;
-    let ser_neurons = Marshal.input ic in
-    let neurons = Array.map Neuron.unserialize0 ser_neurons in
-    Array.iter2 (Neuron.unserialize_dendrits neurons) neurons ser_neurons ;
-    Array.iter2 (Neuron.unserialize_axons neurons) neurons ser_neurons ;
+    let t = BatIO.read_all ic |> PPP.of_string_exc t_ppp in
+    IO.id_seq := t.io_id_seq ;
+    Neuron.id_seq := t.neuron_id_seq ;
+    Simulation.nb_steps := t.nb_steps ;
+    Param.set Simulation.minibatch_size t.minibatch_size ;
+    Param.set Simulation.learn_speed t.learn_speed ;
+    Param.set Simulation.momentum t.momentum ;
+    Param.set inputs (List.map IO.unserialize t.inputs) ;
+    Param.set outputs (List.map IO.unserialize t.outputs) ;
+    let neurons = Array.map Neuron.unserialize0 t.neurons in
+    Array.iter2 (Neuron.unserialize_dendrits neurons) neurons t.neurons ;
+    Array.iter2 (Neuron.unserialize_axons neurons) neurons t.neurons ;
     Param.set Neuron.neurons neurons
 
   let file_prefix = csv.name ^".save."
