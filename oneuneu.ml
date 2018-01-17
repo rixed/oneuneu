@@ -277,7 +277,7 @@ struct
       predictions : float option array array ;
       shuffling : int array ;
       mutable shuffling_idx : int ;
-      mutable min_tot_err : float ;
+      mutable min_tot_err : float array (* for just 2 values *);
       mutable idx : int (* current line to read values from *) ;
       name : string }
 
@@ -305,7 +305,7 @@ struct
       Array.init nb_lines (fun _ -> Array.create nb_cols None)
     and shuffling = Array.init nb_lines (fun i -> i) in
     Array.shuffle shuffling ;
-    { columns ; lines ; predictions ; min_tot_err = max_float ;
+    { columns ; lines ; predictions ; min_tot_err = [| max_float ; max_float |] ;
       name ; extremums ; shuffling ; shuffling_idx = 0 ; idx = shuffling.(0) }
 
   let reset csv =
@@ -314,7 +314,7 @@ struct
         csv.predictions.(l).(c) <- None
       done
     done ;
-    csv.min_tot_err <- max_float
+    csv.min_tot_err <- [| max_float ; max_float |]
 
   let random_walk () =
     let nb_cols = 4 + Random.int 4
@@ -482,7 +482,7 @@ struct
               let polys = p :: polys in
               loop naive_err tot_err skipped polys x (Some (v0, v1)) limit (line + 1)))
     in
-    let partial_graph start stop color set_name y_offset =
+    let partial_graph start stop color set_name set_num =
       let naive_err, tot_err, skipped, polys = loop 0. 0. 0 [] ~-1 None stop start in
       let err_ratio err nbp = err /. i2f nbp in
       let title = set_name ^": " in
@@ -492,12 +492,12 @@ struct
           ( (* Wait before we have visited at least half the data before recording min error: *)
             if skipped > Array.length csv.lines / 2 then "" else
               let e = err_ratio tot_err (set_size - skipped) in
-              if e < csv.min_tot_err then csv.min_tot_err <- e ;
-              "err="^ f2s e ^" min="^ f2s csv.min_tot_err
+              if e < csv.min_tot_err.(set_num) then csv.min_tot_err.(set_num) <- e ;
+              "err="^ f2s e ^" min="^ f2s csv.min_tot_err.(set_num)
           ) ^" naïve="^ f2s (err_ratio naive_err set_size))) in
       group [
         Ogli_render.shape_of_polys (List.map (fun p -> color, [ p ]) polys) Point.origin [] ;
-        Widget.text title ~x:(x_of_line start) ~y:(y + height - (y_offset + 1) * Layout.text_line_height) ~width ~height:Layout.text_line_height ]
+        Widget.text title ~x:(x_of_line start) ~y:(y + height - (set_num + 1) * Layout.text_line_height) ~width ~height:Layout.text_line_height ]
     in
     group [
       partial_graph min_line (min_line + test_set_sz) (c 0.4 0.75 0.9) "test" 0 ;
