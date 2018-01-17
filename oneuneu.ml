@@ -118,7 +118,7 @@ struct
   let details_height = Param.make "neuron details height" 200
   let outputs_height = Param.make "outputs height" 50
   let output_width = Param.make "output width" 130
-  let result_height = Param.make "result height" 100
+  let result_height = Param.make "result height" (7 * text_line_height)
 
   (* We have a control-column on the left with various widgets: *)
   let control_column_width = Param.make "controls width" 200
@@ -275,7 +275,6 @@ struct
       extremums : (float * float) array ;
       lines : float array array ;
       predictions : float option array array ;
-      naive_err : float array ;
       shuffling : int array ;
       mutable shuffling_idx : int ;
       mutable min_tot_err : float ;
@@ -289,14 +288,10 @@ struct
     let nb_lines = Array.length lines
     and nb_cols = Array.length columns  in
     let extremums = Array.map (fun v -> v, v) lines.(0) in
-    let naive_err = Array.create nb_cols 0. in
     for l = 1 to nb_lines - 1 do
       for c = 0 to Array.length lines.(l) - 1 do
         extremums.(c) <- min (fst extremums.(c)) lines.(l).(c),
-                         max (snd extremums.(c)) lines.(l).(c) ;
-        if l >= 1 then
-          naive_err.(c) <- naive_err.(c) +.
-                           abs_float (lines.(l).(c) -. lines.(l-1).(c))
+                         max (snd extremums.(c)) lines.(l).(c)
       done
     done ;
     Format.printf "CSV %s columns: @[" name ;
@@ -310,7 +305,7 @@ struct
       Array.init nb_lines (fun _ -> Array.create nb_cols None)
     and shuffling = Array.init nb_lines (fun i -> i) in
     Array.shuffle shuffling ;
-    { columns ; lines ; predictions ; min_tot_err = max_float ; naive_err ;
+    { columns ; lines ; predictions ; min_tot_err = max_float ;
       name ; extremums ; shuffling ; shuffling_idx = 0 ; idx = shuffling.(0) }
 
   let reset csv =
@@ -404,8 +399,8 @@ struct
   let offset_idx csv off =
     Lr44.pos_mod (csv.idx + off) (Array.length csv.lines)
 
-  let rec next max_lag csv =
-    assert (max_lag < Array.length csv.lines) ;
+  let rec next min_line csv =
+    assert (min_line < Array.length csv.lines) ;
     (* Iter over each line before looping *)
     csv.shuffling_idx <- csv.shuffling_idx + 1 ;
     if csv.shuffling_idx >= Array.length csv.shuffling then (
@@ -413,7 +408,7 @@ struct
       csv.shuffling_idx <- 0 ;
     ) ;
     let l = csv.shuffling.(csv.shuffling_idx) in
-    if l < max_lag then next max_lag csv else
+    if l < min_line then next min_line csv else
     csv.idx <- l
 
   let get_extremum csv io = csv.extremums.(io.col.value)
@@ -436,7 +431,7 @@ struct
     if line < 0 then () (* TODO *) else
       csv.predictions.(line).(col) <- Some v
 
-  let render ~col csv ~x ~y ~width ~height =
+  let render ~col csv test_set_sz min_line ~x ~y ~width ~height =
     (* Draw a simple bar for each prediction/value. When we have several
      * values per pixel draw the bounding box. *)
     let vmi, vma = csv.extremums.(col) in
@@ -446,17 +441,20 @@ struct
       vmi -. l, vma +. l in
     let y_ratio = i2f (height - 1) /. (vma -. vmi) in
     let x_of_line l =
-      let max_l = Array.length csv.lines - 1 in
-      x + ((i2f l *. i2f (width - 1) /. i2f max_l) |> f2i)
+      let nb_lines = Array.length csv.lines - min_line - 1 in
+      x + ((i2f l *. i2f (width - 1) /. i2f nb_lines) |> f2i)
     and y_of_v v =
-      y + ((v -. vmi) *. y_ratio |> f2i |> max 0 |> min (height - 1))
+      y + ((v -. vmi) *. y_ratio |> f2i |> max 0 |> min (height - 2*Layout.text_line_height - 1))
     in
-    let rec loop tot_err skipped polys last_x y_lims line =
-      if line >= Array.length csv.lines then tot_err, skipped, polys
-      else match csv.predictions.(line).(col) with
+    let rec loop naive_err tot_err skipped polys last_x y_lims limit line =
+      if line >= limit then naive_err, tot_err, skipped, polys else
+      let naive_err =
+        if line = 0 then naive_err else
+          naive_err +. abs_float (csv.lines.(line).(col) -. csv.lines.(line-1).(col)) in
+      match csv.predictions.(line).(col) with
       | None ->
           (* Just skip *)
-          loop tot_err (skipped + 1) polys last_x y_lims (line + 1)
+          loop naive_err tot_err (skipped + 1) polys last_x y_lims limit (line + 1)
       | Some v0 ->
         let v1 = csv.lines.(line).(col) in
         let v0, v1 =
@@ -466,11 +464,11 @@ struct
         (match y_lims with
         | None ->
             (* Start a new box *)
-            loop tot_err skipped polys x (Some (v0, v1)) (line + 1)
+            loop naive_err tot_err skipped polys x (Some (v0, v1)) limit (line + 1)
         | Some (pv0, pv1) ->
             if x = last_x then
               (* If we are on the same x then grow the box: *)
-              loop tot_err skipped polys last_x (Some (min v0 pv0, max v1 pv1)) (line + 1)
+              loop naive_err tot_err skipped polys last_x (Some (min v0 pv0, max v1 pv1)) limit (line + 1)
             else (
               (* Otherwise draw the prev box and start a new one: *)
               let y0 = y_of_v pv0 and y1 = y_of_v pv1 in
@@ -482,21 +480,28 @@ struct
                 pi x y1 ++
                 pi last_x y1 in
               let polys = p :: polys in
-              loop tot_err skipped polys x (Some (v0, v1)) (line + 1)))
+              loop naive_err tot_err skipped polys x (Some (v0, v1)) limit (line + 1)))
     in
-    let tot_err, skipped, polys = loop 0. 0 [] ~-1 None 0 in
-    let title = "naive err: "^ f2s csv.naive_err.(col) in
-    let title =
-      (* Wait before we have visited at least half the data before recording min error: *)
-      if skipped > Array.length csv.lines / 2 then title else
-        let avg = tot_err /. i2f (Array.length csv.lines - skipped) in
-        let e = tot_err +. avg *. i2f skipped in
-        if e < csv.min_tot_err then csv.min_tot_err <- e ;
-        title ^" - ∑err: "^ f2s e ^" (min: "^ f2s csv.min_tot_err ^")"
-    and color = c 0.5 0.5 0.5 in
+    let partial_graph start stop color set_name y_offset =
+      let naive_err, tot_err, skipped, polys = loop 0. 0. 0 [] ~-1 None stop start in
+      let err_ratio err nbp = err /. i2f nbp in
+      let title = set_name ^": " in
+      let title = title ^ (
+        let set_size = stop - start in
+        if set_size = 0 then "empty set" else (
+          ( (* Wait before we have visited at least half the data before recording min error: *)
+            if skipped > Array.length csv.lines / 2 then "" else
+              let e = err_ratio tot_err (set_size - skipped) in
+              if e < csv.min_tot_err then csv.min_tot_err <- e ;
+              "err="^ f2s e ^" min="^ f2s csv.min_tot_err
+          ) ^" naïve="^ f2s (err_ratio naive_err set_size))) in
+      group [
+        Ogli_render.shape_of_polys (List.map (fun p -> color, [ p ]) polys) Point.origin [] ;
+        Widget.text title ~x:(x_of_line start) ~y:(y + height - (y_offset + 1) * Layout.text_line_height) ~width ~height:Layout.text_line_height ]
+    in
     group [
-      Ogli_render.shape_of_polys (List.map (fun p -> color, [ p ]) polys) Point.origin [] ;
-      Widget.text title ~x ~y:(y + height - Layout.text_line_height) ~width ~height:Layout.text_line_height ]
+      partial_graph min_line (min_line + test_set_sz) (c 0.4 0.75 0.9) "test" 0 ;
+      partial_graph (min_line + test_set_sz) (Array.length csv.lines) (c 0.7 0.7 0.7) "train" 1 ]
 end
 
 let msaa = ref true
@@ -1453,14 +1458,8 @@ struct
       ) 0. n.axons ;
     assert (Float.compare nan n.dE_dOutput <> 0)
 
-  (* [outputs] must be a float array with the output targets for
-   * each output neuron, in io_key order. *)
-  (* TODO: choose various methods (momentum, resilient back prop...
-   * see https://en.wikipedia.org/wiki/Rprop *)
-  let back_propagation () =
+  let set_output_and_err () =
     let open Neuron in
-    (* Begin with setting the dE_dOutput of the output nodes.
-     * While at it, also save the prediction in the CSV. *)
     let tot_err, _ =
       fold_only Output (fun (e, i) n ->
         let io = find_io outputs.value n.io_key in
@@ -1475,12 +1474,14 @@ struct
         e +. 0.5 *. sq n.dE_dOutput,
         i + 1
       ) (0., 0) in
+    tot_err
+
+  let back_propagation () =
+    let open Neuron in
     (* Now we can back-propagate to the hidden layer *)
     iter_back_but Output propagate_err_backward ;
     (* Accumulate the gradient *)
-    iter_all accum_gradient ;
-    (* Returns the total error *)
-    tot_err
+    iter_all accum_gradient
 
   let adjust_weights learn_speed momentum =
       let open Neuron in
@@ -1525,23 +1526,32 @@ struct
   let learn_speed = Param.make "learning speed" 0.03
   let momentum = Param.make "momentum" 0.
   let minibatch_size = Param.make "minibatch size" 1
+  let test_set_size = Param.make "test set size" 0
 
   let step () =
     if is_running.value then (
       CSV.next !max_lag csv ;
       input_from_csv () ;
-      forward_propagation () ;
-      let tot_err = back_propagation () in
 
-      incr minibatch_steps ;
-      if !minibatch_steps >= minibatch_size.value then (
-        adjust_weights learn_speed.value momentum.value ;
-        minibatch_steps := 0 ;
-        incr nb_batches ;
-        (* Refresh the dendrits from time to time: *)
-        if !nb_batches land 7 = 0 then
-          Param.change Neuron.neurons) ;
-      Graph.push tot_err_graph.value tot_err ;
+      forward_propagation () ;
+      let tot_err = set_output_and_err () in
+      (* Begin with setting the dE_dOutput of the output nodes.
+       * While at it, also save the prediction in the CSV. *)
+
+      (* If the line was from the training set we merely skip updating the
+       * weights *)
+      if csv.idx >= !max_lag + test_set_size.value then (
+        back_propagation () ;
+        incr minibatch_steps ;
+        if !minibatch_steps >= minibatch_size.value then (
+          adjust_weights learn_speed.value momentum.value ;
+          minibatch_steps := 0 ;
+          incr nb_batches ;
+          (* Refresh the dendrits from time to time: *)
+          if !nb_batches land 7 = 0 then
+            Param.change Neuron.neurons) ;
+        Graph.push tot_err_graph.value tot_err ;
+      ) ;
 
       Param.change tot_err_graph ;
       Neuron.touch_hovered () ;
@@ -1563,6 +1573,7 @@ struct
       neuron_id_seq : int [@ppp_default 0] ;
       nb_steps : int [@ppp_default 0] ;
       minibatch_size : int [@ppp_default 1] ;
+      test_set_size : int [@ppp_default 0] ;
       momentum : float [@ppp_default 0.] ;
       learn_speed : float [@ppp_default 0.03] ;
       inputs : IO.serialized_io list ;
@@ -1574,6 +1585,7 @@ struct
       neuron_id_seq = !Neuron.id_seq ;
       nb_steps = !Simulation.nb_steps ;
       minibatch_size = Simulation.minibatch_size.value ;
+      test_set_size = Simulation.test_set_size.value ;
       momentum = Simulation.momentum.value ;
       learn_speed = Simulation.learn_speed.value ;
       inputs = List.map IO.serialize inputs.value ;
@@ -1591,6 +1603,7 @@ struct
     Neuron.id_seq := t.neuron_id_seq ;
     Simulation.nb_steps := t.nb_steps ;
     Param.set Simulation.minibatch_size t.minibatch_size ;
+    Param.set Simulation.test_set_size t.test_set_size ;
     Param.set Simulation.learn_speed t.learn_speed ;
     Param.set Simulation.momentum t.momentum ;
     Param.set inputs (List.map IO.unserialize t.inputs) ;
@@ -1656,6 +1669,10 @@ let render_result_controls ~x ~y ~width ~height =
        0.9, "0.9" ; 0.95, "0.95" ; 0.99, "0.99" |]
   and minibatch_options =
     [| 1, "1" ; 10, "10" ; 100, "100" ; 1_000, "1,000" ; 10_000, "10,000" |]
+  and test_set_size_options =
+    let p n =
+      let l = Array.length csv.lines in (n*l + l/2) / 100 in
+    [| 0, "cont." ; p 5, "5%" ; p 10, "10%" ; p 25, "25%" ; p 50, "50%" |]
   and label_w = 120 in [
   fun_of need_save (fun need_save ->
     if need_save then
@@ -1684,12 +1701,15 @@ let render_result_controls ~x ~y ~width ~height =
         Widget.button "Reset!" ~on_click:reset ~x:(2 * width/3) ~y ~width:(width/3) ~height ]) ;
   fun_of Simulation.nb_steps_update (fun _ -> [
     Widget.text ("Steps: "^ string_of_int !Simulation.nb_steps) ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ]) ;
-  Widget.text "Minibatch Size:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
-  Widget.simple_select minibatch_options Simulation.minibatch_size ~x:(x + label_w) ~y:(y + height - 4 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
-  Widget.text "Learn Rate:" ~x ~y:(y + height - 5 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
-  Widget.simple_select learn_speed_options Simulation.learn_speed ~x:(x + label_w) ~y:(y + height - 5 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
-  Widget.text "Momentum:" ~x ~y:(y + height - 6 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
-  Widget.simple_select momentum_options Simulation.momentum ~x:(x + label_w) ~y:(y + height - 6 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ]
+
+  Widget.text "Test Set Size:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.simple_select test_set_size_options Simulation.test_set_size ~x:(x + label_w) ~y:(y + height - 4 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
+  Widget.text "Minibatch Size:" ~x ~y:(y + height - 5 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.simple_select minibatch_options Simulation.minibatch_size ~x:(x + label_w) ~y:(y + height - 5 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
+  Widget.text "Learn Rate:" ~x ~y:(y + height - 6 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.simple_select learn_speed_options Simulation.learn_speed ~x:(x + label_w) ~y:(y + height - 6 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
+  Widget.text "Momentum:" ~x ~y:(y + height - 7 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.simple_select momentum_options Simulation.momentum ~x:(x + label_w) ~y:(y + height - 7 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ]
 
 let render_results ~x ~y ~width ~height =
   fun_of Layout.control_column_width (fun control_width -> [
@@ -1703,8 +1723,9 @@ let render_results ~x ~y ~width ~height =
         let output = find_io outputs.value n.Neuron.io_key in
         fun_of output.col (fun col -> [
           fun_of output.avg (fun avg -> [
-            if avg <> 0 then Widget.todo ~x ~y ~width ~height
-            else CSV.render ~col csv ~x ~y ~width ~height ]) ]) ])
+            if avg <> 0 then Widget.todo ~x ~y ~width ~height else
+            fun_of Simulation.test_set_size (fun test_set_sz -> [
+              CSV.render ~col csv test_set_sz !max_lag ~x ~y ~width ~height ]) ]) ]) ])
     in
     fun_of Neuron.hovered (function
       | Some n when n.layer = Output -> [ render_predictions n ]
