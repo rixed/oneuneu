@@ -1220,7 +1220,7 @@ struct
   let () = Param.on_update inputs (fun () ->
     let ix, iy = selected_for_axis.value
     and cx, cy = (* candidate values *)
-      match inputs.value with
+      match List.rev inputs.value with
       | [] -> ~-1, ~-1
       | [ i ] -> i.id, i.id
       | i1 :: i2 :: _ -> i1.id, i2.id
@@ -1228,7 +1228,8 @@ struct
       id >= 0 && List.exists (fun (i : io) -> i.id = id) inputs.value
     in
     let ix = if valid ix then ix else cx
-    and iy = if valid iy then iy else cy in
+    and iy = if valid iy then iy else
+             if ix <> cy then cy else cx in
     if (ix, iy) <> selected_for_axis.value then
       Param.set selected_for_axis (ix, iy))
 
