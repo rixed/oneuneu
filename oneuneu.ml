@@ -489,6 +489,7 @@ end
 
 let msaa = ref true
 let double_buffer = ref false
+let test_name = ref ""
 
 let csv =
   let csv_file = ref ""
@@ -499,6 +500,7 @@ let csv =
     "--csv", Set_string csv_file, "CSV file to use" ;
     "--timestamp", Set_int seconds_field, "Use this field number (starting at 0) as source of EPOCH seconds" ;
     "--minutes", Set_int minutes_field, "Use this field number (starting at 0) as source of EPOCH minutes" ;
+    "--name", Set_string test_name, "Name to use for saving/loading the results (default to CSV file name)" ;
     "--no-msaa", Clear msaa, "Disable MSAA" ;
     "--double-buffer", Set double_buffer, "Force double-buffer" ]
     (fun str -> raise (Bad ("Unknown argument "^ str)))
@@ -1587,7 +1589,9 @@ struct
     Neuron.sort_neurons neurons ;
     Param.set Neuron.neurons neurons
 
-  let file_prefix = csv.name ^".save."
+  let file_prefix =
+    if !test_name = "" then csv.name ^".save."
+    else !test_name ^"."
 
   let save _ _ =
     let fname n = file_prefix ^ string_of_int n
