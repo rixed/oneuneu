@@ -1214,6 +1214,31 @@ struct
           [ Widget.text txt ~x ~y ~width ~height ]) ])
     | Hidden -> group []
 
+  let input_from_csv () =
+    iter_only Input (fun n ->
+      let io = find_io inputs.value n.io_key in
+      let x, _curs = CSV.get_value csv io
+      and extr = CSV.get_extremum csv io in
+      let o = scale_input n.func extr x in
+      (* Note that we do *not* go through the transfer function itself.
+       * We just use its type to scale. If we did, then for sigmoids the
+       * output would be 0..1 which would be biased right from the start.
+       * So better not.
+       * Therefore, set the transfer function of the input neurons just
+       * to control the scaling. If you mix different transfer function
+       * in your network you are on your own. *)
+      n.output <- o)
+
+  let forward_propagation () =
+    iter_all (fun n ->
+      (* If there is no dendrit keep current output (for biases and input neurons) *)
+      if n.dendrits <> [] then
+        n.output <-
+          List.fold_left (fun s d ->
+            s +. d.source.output *. d.weight
+          ) 0. n.dendrits |>
+          transfer n.func)
+
   let selected_for_axis = Param.make "selected IO for IO map" (~-1, ~-1)
   (* Make sure we have selected some axes as soon as we have inputs,
    * and that we do not use deleted inputs: *)
@@ -1233,6 +1258,41 @@ struct
     if (ix, iy) <> selected_for_axis.value then
       Param.set selected_for_axis (ix, iy))
 
+  let refresh_io_map () =
+    (* Grab the inputs of interest: *)
+    let idx, idy = selected_for_axis.value in
+    (* Now grab the input neurons, and set all other input neurons
+     * to 0: *)
+    match fold_only Input (fun (nx, ny as prev) n ->
+        if n.io_key <> idx && n.io_key <> idy then (
+          n.output <- 0. ;
+          prev
+        ) else (
+          (if n.io_key = idx then Some n else nx),
+          (if n.io_key = idy then Some n else ny))
+      ) (None, None) with
+    | None, _ | _, None -> ()
+    | Some nx, Some ny ->
+      (* Now iter from one extremum to the other for inx and iny: *)
+      let default_range = ~-.1., 1. in
+      let miny, maxy = x_range ny.func |? default_range  (* yes x_range (should be input_range) *)
+      and minx, maxx = x_range nx.func |? default_range  in
+      for y = 0 to io_map_sz - 1 do
+        ny.output <-
+          miny +. (maxy -. miny) *. i2f y /. i2f (io_map_sz - 1) ;
+        for x = 0 to io_map_sz - 1 do
+          nx.output <-
+            minx +. (maxx -. minx) *. i2f x /. i2f (io_map_sz - 1) ;
+          (* Propagate *)
+          forward_propagation () ;
+          (* Record the value for all neurons *)
+          iter_all (fun n ->
+            let vmin, vmax = y_range n.func |? default_range in
+            n.io_map.(y).(x) <- (n.output -. vmin) /. (vmax -. vmin))
+        done
+      done ;
+      Param.change io_maps_update
+
   type direction = Vertical | Horizontal
   (* [width] and [height] are the coordinate of the whole surrounding rectangle
    * and therefore are the same for both directions. *)
@@ -1251,11 +1311,12 @@ struct
                 (match dir with Vertical -> sel_y | _ -> sel_x) in
               let on_click =
                 if selected then None else Some (fun _ _ ->
-                  match dir with
+                  (match dir with
                   | Vertical ->
                       Param.set selected_for_axis (sel_x, input.id)
                   | Horizontal ->
-                      Param.set selected_for_axis (input.id, sel_y)) in
+                      Param.set selected_for_axis (input.id, sel_y)) ;
+                  refresh_io_map ()) in
               let but = Widget.button ~selected ?on_click (string_of_int i) ~x ~y ~width:but_width ~height:but_height in
               loop (but :: buts) (x + dx) (y - dy) (i + 1) inputs in
         let x = x + dx and y = y + nb_inputs * dy in
@@ -1404,33 +1465,6 @@ struct
   let tot_err_history = 150
   let tot_err_graph = Param.make "total error graph" (Graph.make "Error" tot_err_history)
 
-  let input_from_csv () =
-    let open Neuron in
-    iter_only Input (fun n ->
-      let io = find_io inputs.value n.io_key in
-      let x, _curs = CSV.get_value csv io
-      and extr = CSV.get_extremum csv io in
-      let o = scale_input n.func extr x in
-      (* Note that we do *not* go through the transfer function itself.
-       * We just use its type to scale. If we did, then for sigmoids the
-       * output would be 0..1 which would be biased right from the start.
-       * So better not.
-       * Therefore, set the transfer function of the input neurons just
-       * to control the scaling. If you mix different transfer function
-       * in your network you are on your own. *)
-      n.output <- o)
-
-  let forward_propagation () =
-    let open Neuron in
-    iter_all (fun n ->
-      (* If there is no dendrit keep current output (for biases and input neurons) *)
-      if n.dendrits <> [] then
-        n.output <-
-          List.fold_left (fun s d ->
-            s +. d.source.output *. d.weight
-          ) 0. n.dendrits |>
-          transfer n.func)
-
   let accum_gradient n =
     let open Neuron in
     List.iter (fun d ->
@@ -1488,42 +1522,6 @@ struct
       let open Neuron in
       iter_all (adjust_dendrits learn_speed momentum)
 
-  let refresh_io_map () =
-    let open Neuron in
-    (* Grab the inputs of interest: *)
-    let idx, idy = selected_for_axis.value in
-    (* Now grab the input neurons, and set all other input neurons
-     * to 0: *)
-    match fold_only Input (fun (nx, ny as prev) n ->
-        if n.io_key <> idx && n.io_key <> idy then (
-          n.output <- 0. ;
-          prev
-        ) else (
-          (if n.io_key = idx then Some n else nx),
-          (if n.io_key = idy then Some n else ny))
-      ) (None, None) with
-    | None, _ | _, None -> ()
-    | Some nx, Some ny ->
-      (* Now iter from one extremum to the other for inx and iny: *)
-      let default_range = ~-.1., 1. in
-      let miny, maxy = x_range ny.func |? default_range  (* yes x_range (should be input_range) *)
-      and minx, maxx = x_range nx.func |? default_range  in
-      for y = 0 to io_map_sz - 1 do
-        ny.output <-
-          miny +. (maxy -. miny) *. i2f y /. i2f (io_map_sz - 1) ;
-        for x = 0 to io_map_sz - 1 do
-          nx.output <-
-            minx +. (maxx -. minx) *. i2f x /. i2f (io_map_sz - 1) ;
-          (* Propagate *)
-          forward_propagation () ;
-          (* Record the value for all neurons *)
-          iter_all (fun n ->
-            let vmin, vmax = y_range n.func |? default_range in
-            n.io_map.(y).(x) <- (n.output -. vmin) /. (vmax -. vmin))
-        done
-      done ;
-      Param.change io_maps_update
-
   let learn_speed = Param.make "learning speed" 0.03
   let momentum = Param.make "momentum" 0.
   let minibatch_size = Param.make "minibatch size" 1
@@ -1532,9 +1530,9 @@ struct
   let step () =
     if is_running.value then (
       CSV.next !max_lag csv ;
-      input_from_csv () ;
+      Neuron.input_from_csv () ;
 
-      forward_propagation () ;
+      Neuron.forward_propagation () ;
       let tot_err = set_output_and_err () in
       (* Begin with setting the dE_dOutput of the output nodes.
        * While at it, also save the prediction in the CSV. *)
@@ -1565,7 +1563,7 @@ struct
         Neuron.touch_hovered () ;
         set_need_save ()) ;
       if !nb_steps land 31 = 0 || !rem_steps = 0 then
-        refresh_io_map ())
+        Neuron.refresh_io_map ())
 end
 
 module LoadSave =
