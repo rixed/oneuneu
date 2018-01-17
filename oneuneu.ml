@@ -79,8 +79,17 @@ let find_io ios id =
 let need_save = Param.make "need save" false
 let set_need_save () = Param.set need_save true
 
-let inputs = Param.make ~on_update:set_need_save "inputs" []
-let outputs = Param.make ~on_update:set_need_save "outputs" []
+let inputs = Param.make ~on_update:[ set_need_save ] "inputs" []
+let outputs = Param.make ~on_update:[ set_need_save ] "outputs" []
+
+let max_lag = ref 0
+let update_max_lag () =
+  max_lag :=
+    List.fold_left (fun m i ->
+      max m (i.lag.value + i.avg.value)
+    ) 0 inputs.Param.value
+let () = Param.on_update inputs update_max_lag
+
 
 let box_selection = Param.make "box selection" None
 
@@ -395,14 +404,17 @@ struct
   let offset_idx csv off =
     Lr44.pos_mod (csv.idx + off) (Array.length csv.lines)
 
-  let next csv =
+  let rec next max_lag csv =
+    assert (max_lag < Array.length csv.lines) ;
     (* Iter over each line before looping *)
     csv.shuffling_idx <- csv.shuffling_idx + 1 ;
     if csv.shuffling_idx >= Array.length csv.shuffling then (
       Array.shuffle csv.shuffling ;
       csv.shuffling_idx <- 0 ;
     ) ;
-    csv.idx <- csv.shuffling.(csv.shuffling_idx)
+    let l = csv.shuffling.(csv.shuffling_idx) in
+    if l < max_lag then next max_lag csv else
+    csv.idx <- l
 
   let get_extremum csv io = csv.extremums.(io.col.value)
 
@@ -727,7 +739,7 @@ struct
 
   (* List of neurons, that we recompute (conservatively) whenever
    * the net is changed. *)
-  let neurons = Param.make ~on_update:set_need_save "neurons" [||]
+  let neurons = Param.make ~on_update:[ set_need_save ] "neurons" [||]
   (* we cannot really ~on_update:set_need_save because we update neurons for
    * non-savable changes such as selection changes *)
 
@@ -1302,23 +1314,23 @@ struct
       [ Widget.text ~x ~y ~width:(width - del_width) ~height:Layout.text_line_height title ;
         Widget.button ~x:(x + width - del_width) ~y ~width:del_width ~height:height ~on_click:on_del "[X!]" ]
 
-  let field_selector col ~x ~y ~width ~height =
+  let field_selector t ~x ~y ~width ~height =
     let text_width = 40 in
     group [
       Widget.text ~x ~y ~width:text_width ~height "Field:" ;
-      Widget.simple_select csv_fields col ~x:(x + text_width) ~y ~width:(width - text_width) ~height ]
+      Widget.simple_select csv_fields t.col ~x:(x + text_width) ~y ~width:(width - text_width) ~height ]
 
-  let lag_selector lag ~x ~y ~width ~height =
+  let lag_selector t ~x ~y ~width ~height =
     let text_width = 40 in
     group [
       Widget.text ~x ~y ~width ~height "Lag:" ;
-      Widget.int_select lag ~max:(Array.length csv.lines) ~x:(x + text_width) ~y ~width:(width - text_width) ~height ]
+      Widget.int_select t.lag ~max:(Array.length csv.lines - 1 - t.avg.value) ~x:(x + text_width) ~y ~width:(width - text_width) ~height ]
 
-  let avg_selector avg ~x ~y ~width ~height =
+  let avg_selector t ~x ~y ~width ~height =
     let text_width = 40 in
     group [
       Widget.text ~x ~y ~width ~height "Avg:" ;
-      Widget.int_select avg ~max:(Array.length csv.lines) ~x:(x + text_width) ~y ~width:(width - text_width) ~height ]
+      Widget.int_select t.avg ~max:(Array.length csv.lines - 1 - t.lag.value) ~x:(x + text_width) ~y ~width:(width - text_width) ~height ]
 
   let render title ios_param t ~x ~y ~width ~height =
     (* Every input has a common header with some controls for
@@ -1330,17 +1342,17 @@ struct
     in
     group [
       controller_header title ~on_del ~x ~y:(y + height - 1 * Layout.text_line_height) ~width ~height:Layout.text_line_height;
-      field_selector t.col ~x ~y:(y + height - 2 * Layout.text_line_height) ~width ~height:Layout.text_line_height ;
-      lag_selector t.lag ~x ~y:(y + height - 3 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
-      avg_selector t.avg ~x:(x + width/2) ~y:(y + height - 3 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ]
+      field_selector t ~x ~y:(y + height - 2 * Layout.text_line_height) ~width ~height:Layout.text_line_height ;
+      lag_selector t ~x ~y:(y + height - 3 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
+      avg_selector t ~x:(x + width/2) ~y:(y + height - 3 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ]
 
   let id_seq = ref 0
 
   let make_ id col lag avg =
     { id ;
-      col = Param.make ~on_update:set_need_save "some IO CSV column" col ;
-      lag = Param.make ~on_update:set_need_save "some IO CSV lag" lag ;
-      avg = Param.make ~on_update:set_need_save "some IO CSV avg" avg }
+      col = Param.make ~on_update:[ set_need_save ] "some IO CSV column" col ;
+      lag = Param.make ~on_update:[ set_need_save ; update_max_lag ] "some IO CSV lag" lag ;
+      avg = Param.make ~on_update:[ set_need_save ; update_max_lag ] "some IO CSV avg" avg }
 
   let make () =
     incr id_seq ;
@@ -1516,7 +1528,7 @@ struct
 
   let step () =
     if is_running.value then (
-      CSV.next csv ;
+      CSV.next !max_lag csv ;
       input_from_csv () ;
       forward_propagation () ;
       let tot_err = back_propagation () in
