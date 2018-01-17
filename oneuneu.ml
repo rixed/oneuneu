@@ -1655,9 +1655,8 @@ let render_result_controls ~x ~y ~width ~height =
     [| 0., "0" ; 0.1, "0.1" ; 0.5, "0.5" ;
        0.9, "0.9" ; 0.95, "0.95" ; 0.99, "0.99" |]
   and minibatch_options =
-    [| 1, "1" ; 10, "10" ; 100, "100" ; 1_000, "1,000" ;
-       10_000, "10,000" ; 100_000_000, "100,000,000" |]
-  and label_w = 90 in [
+    [| 1, "1" ; 10, "10" ; 100, "100" ; 1_000, "1,000" ; 10_000, "10,000" |]
+  and label_w = 120 in [
   fun_of need_save (fun need_save ->
     if need_save then
       [ Widget.button "Save" ~on_click:LoadSave.save ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width / 2) ~height:Layout.text_line_height ]
@@ -1685,7 +1684,7 @@ let render_result_controls ~x ~y ~width ~height =
         Widget.button "Reset!" ~on_click:reset ~x:(2 * width/3) ~y ~width:(width/3) ~height ]) ;
   fun_of Simulation.nb_steps_update (fun _ -> [
     Widget.text ("Steps: "^ string_of_int !Simulation.nb_steps) ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ]) ;
-  Widget.text "Minibatches:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.text "Minibatch Size:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
   Widget.simple_select minibatch_options Simulation.minibatch_size ~x:(x + label_w) ~y:(y + height - 4 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
   Widget.text "Learn Rate:" ~x ~y:(y + height - 5 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
   Widget.simple_select learn_speed_options Simulation.learn_speed ~x:(x + label_w) ~y:(y + height - 5 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
