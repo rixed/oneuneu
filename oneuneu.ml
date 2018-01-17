@@ -1550,18 +1550,19 @@ struct
           (* Refresh the dendrits from time to time: *)
           if !nb_batches land 7 = 0 then
             Param.change Neuron.neurons) ;
-        Graph.push tot_err_graph.value tot_err ;
       ) ;
 
-      Param.change tot_err_graph ;
-      Neuron.touch_hovered () ;
-      set_need_save () ;
+      Graph.push tot_err_graph.value tot_err ;
+
       decr rem_steps ;
       incr nb_steps ;
       if !rem_steps = 0 then Param.set is_running false ;
-      (* Refresh number of steps from time to time: *)
-      if !nb_steps land 15 = 0 || !rem_steps = 0 then
+      (* Refresh params now and then: *)
+      if !nb_steps land 15 = 0 || !rem_steps = 0 then (
         Param.change nb_steps_update ;
+        Param.change tot_err_graph ;
+        Neuron.touch_hovered () ;
+        set_need_save ()) ;
       if !nb_steps land 31 = 0 || !rem_steps = 0 then
         refresh_io_map ())
 end
@@ -1719,7 +1720,7 @@ let render_results ~x ~y ~width ~height =
       fun_of Simulation.tot_err_graph (fun graph ->
         [ Graph.render graph ~x ~y ~width ~height ])
     and render_predictions n =
-      fun_of Simulation.nb_steps_update (fun () -> [
+      fun_of Neuron.io_maps_update (fun () -> [
         let output = find_io outputs.value n.Neuron.io_key in
         fun_of output.col (fun col -> [
           fun_of output.avg (fun avg -> [
