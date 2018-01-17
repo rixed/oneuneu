@@ -1817,7 +1817,9 @@ let () =
     let dir =
       let len = String.length dir in
       if len > 0 && dir.[len - 1] <> '/' then dir ^"/" else dir in
-    Ogli_render.init ~title:"NeuralNet Test" ~font:(dir ^"vera.ttf") ~double_buffer ~msaa width height ;
+    let title = "NeuralNet - "^
+        (if !test_name <> "" then !test_name else csv.name) in
+    Ogli_render.init ~title ~font:(dir ^"vera.ttf") ~double_buffer ~msaa width height ;
     Ogli_view.make ~double_buffer ~width:Layout.screen_width ~height:Layout.screen_height dataviz_layout in
   let view =
     try init !double_buffer !msaa with Failure _ ->
