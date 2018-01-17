@@ -218,7 +218,7 @@ struct
         (if wrap || cur_idx > 0 then
           text "‹" ~x ~y ~width:arrow_w ~height
         else group []) ;
-        (if wrap || cur_idx < max_idx - 1 then
+        (if wrap || cur_idx < max_idx then
           text "›" ~x:(x + width - arrow_w) ~y ~width:arrow_w ~height
         else group []) ])
 
