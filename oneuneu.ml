@@ -982,7 +982,7 @@ struct
         and dst = to_pos +~ orig in
         let dy = K.half (K.sub dst.(1) src.(1)) in
         let ctrl = p K.zero dy in
-        let dendrit_width = min 10. (2.55 +. abs_float weight) in
+        let dendrit_width = min 10. (0.55 +. abs_float weight) in
         let poly = Path.start src |>
                    Path.bezier_to dst
                      [ src +~ ctrl ; dst -~ ctrl ] |>
