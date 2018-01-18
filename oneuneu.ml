@@ -561,8 +561,8 @@ struct
     g.max <- max g.max v ;
     g.accum <- g.accum +. v ;
     g.nb_accums <- g.nb_accums + 1 ;
-    if g.nb_accums > g.nb_shrinks then (
-      g.values.(g.next_idx) <- g.accum  /. (2. ** i2f g.nb_shrinks) ;
+    if g.nb_accums >= 1 lsl g.nb_shrinks then (
+      g.values.(g.next_idx) <- g.accum  /. i2f g.nb_accums ;
       g.next_idx <- g.next_idx + 1 ;
       g.accum <- 0. ;
       g.nb_accums <- 0)
