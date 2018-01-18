@@ -68,7 +68,9 @@ type io =
      * same time several selected past values: *)
     lag : int Param.t ;
     (* How many past values to average with the current one: *)
-    avg : int Param.t }
+    avg : int Param.t ;
+    (* Precomputed values from the CSV for this IO: *)
+    values : float array }
 
 let sort_io =
   List.fast_sort (fun io1 io2 -> compare io1.id io2.id)
@@ -396,9 +398,6 @@ struct
       columns, lines in
     make columns lines fname
 
-  let offset_idx csv off =
-    Lr44.pos_mod (csv.idx + off) (Array.length csv.lines)
-
   let rec next min_line csv =
     assert (min_line < Array.length csv.lines) ;
     (* Iter over each line before looping *)
@@ -411,25 +410,20 @@ struct
     if l < min_line then next min_line csv else
     csv.idx <- l
 
-  let get_extremum csv io = csv.extremums.(io.col.value)
-
-  let get_value csv io =
-    match io.lag.value, io.avg.value with
-    | 0, 0 -> (* fast path *)
-      csv.lines.(csv.idx).(io.col.value), (csv.idx, io.col.value)
-    | lag, 0 ->
-      let idx = offset_idx csv ~-(lag) in
-      csv.lines.(idx).(io.col.value), (idx, io.col.value)
-    | lag, avg ->
+  let get_value csv col lag avg idx =
+    if avg = 0 then (* fast path *)
+      let idx = Lr44.pos_mod (idx - lag) (Array.length csv.lines) in
+      csv.lines.(idx).(col)
+    else
       let rec sum i s =
         if i < 0 then s else
-          let idx = offset_idx csv ~-(lag + i) in
-          sum (i - 1) (s +. csv.lines.(idx).(io.col.value)) in
-      sum avg 0. /. i2f avg, (~-1, ~-1 (* TODO *))
+          let idx = Lr44.pos_mod (idx - lag -i) (Array.length csv.lines) in
+          sum (i - 1) (s +. csv.lines.(idx).(col)) in
+      sum avg 0. /. i2f avg
 
-  let predict csv (line, col) v =
-    if line < 0 then () (* TODO *) else
-      csv.predictions.(line).(col) <- Some v
+  let predict csv lag col v =
+    let idx = Lr44.pos_mod (csv.idx - lag) (Array.length csv.lines) in
+    csv.predictions.(idx).(col) <- Some v
 
   let render ~col csv test_set_sz min_line ~x ~y ~width ~height =
     (* Draw a simple bar for each prediction/value. When we have several
@@ -1203,8 +1197,8 @@ struct
     | Input ->
       fun_of inputs (fun ios -> [
         let io = find_io ios n.io_key in
-        let extr = CSV.get_extremum csv io in
-        let i, _curs = CSV.get_value csv io in
+        let extr = csv.extremums.(io.col.value) in
+        let i = io.values.(csv.idx) in
         let i' = scale_input_rev n.func extr n.output in
         fun_of io.col (fun col ->
           let txt = csv.columns.(col) ^": "^ f2s i' ^" for "^ f2s i in
@@ -1212,8 +1206,8 @@ struct
     | Output ->
       fun_of outputs (fun ios -> [
         let io = find_io ios n.io_key in
-        let extr = CSV.get_extremum csv io in
-        let t, _curs = CSV.get_value csv io in
+        let extr = csv.extremums.(io.col.value) in
+        let t = io.values.(csv.idx) in
         let t' = scale_output_rev n.func extr n.output in
         fun_of io.col (fun col ->
           let txt = csv.columns.(col) ^": "^ f2s t' ^" for "^ f2s t in
@@ -1223,8 +1217,8 @@ struct
   let input_from_csv () =
     iter_only Input (fun n ->
       let io = find_io inputs.value n.io_key in
-      let x, _curs = CSV.get_value csv io
-      and extr = CSV.get_extremum csv io in
+      let x = io.values.(csv.idx)
+      and extr = csv.extremums.(io.col.value) in
       let o = scale_input n.func extr x in
       (* Note that we do *not* go through the transfer function itself.
        * We just use its type to scale. If we did, then for sigmoids the
@@ -1421,11 +1415,24 @@ struct
 
   let id_seq = ref 0
 
+  let precomp io () =
+    for i = 0 to Array.length io.values - 1 do
+      io.values.(i) <-
+        CSV.get_value csv io.col.value io.lag.value io.avg.value i
+    done
+
   let make_ id col lag avg =
-    { id ;
-      col = Param.make ~on_update:[ set_need_save ] "some IO CSV column" col ;
-      lag = Param.make ~on_update:[ set_need_save ; update_max_lag ] "some IO CSV lag" lag ;
-      avg = Param.make ~on_update:[ set_need_save ; update_max_lag ] "some IO CSV avg" avg }
+    let io =
+      { id ;
+        col = Param.make ~on_update:[ set_need_save ] "some IO CSV column" col ;
+        lag = Param.make ~on_update:[ set_need_save ; update_max_lag ] "some IO CSV lag" lag ;
+        avg = Param.make ~on_update:[ set_need_save ; update_max_lag ] "some IO CSV avg" avg ;
+        values = Array.make (Array.length csv.lines) 0. } in
+    precomp io () ;
+    Param.on_update io.col (precomp io) ;
+    Param.on_update io.lag (precomp io) ;
+    Param.on_update io.avg (precomp io) ;
+    io
 
   let make () =
     incr id_seq ;
@@ -1504,14 +1511,15 @@ struct
     let tot_err, _ =
       fold_only Output (fun (e, i) n ->
         let io = find_io outputs.value n.io_key in
-        let t, cursor = CSV.get_value csv io
-        and extr = CSV.get_extremum csv io in
+        let t = io.values.(csv.idx)
+        and extr = csv.extremums.(io.col.value) in
         (* Same remark as in forward_propagation regarding the
          * transfer function of output neurons. *)
         let r = scale_output_rev n.func extr n.output in
         n.dE_dOutput <- (r -. t) /. (snd extr -. fst extr) ;
         assert (Float.compare nan n.dE_dOutput <> 0) ;
-        CSV.predict csv cursor r ;
+        if io.avg.value = 0 then (* TODO: predict for avg <> 0 *)
+          CSV.predict csv io.lag.value io.col.value r ;
         e +. 0.5 *. sq n.dE_dOutput,
         i + 1
       ) (0., 0) in
