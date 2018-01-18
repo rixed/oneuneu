@@ -69,8 +69,10 @@ type io =
     lag : int Param.t ;
     (* How many past values to average with the current one: *)
     avg : int Param.t ;
-    (* Precomputed values from the CSV for this IO: *)
-    values : float array }
+    (* Precomputed lagged/averaged (but not diffed) values from the CSV: *)
+    csv_values : float array ;
+    (* Extremums values of the diffed csv_values *)
+    mutable diff_extremums : float * float }
 
 let sort_io =
   List.fast_sort (fun io1 io2 -> compare io1.id io2.id)
@@ -1195,29 +1197,26 @@ struct
   let render_csv_value n ~x ~y ~width ~height =
     match n.layer with
     | Input ->
-      fun_of inputs (fun ios -> [
+      fun_of inputs (fun ios ->
         let io = find_io ios n.io_key in
-        let extr = csv.extremums.(io.col.value) in
-        let i = io.values.(csv.idx) in
-        let i' = scale_input_rev n.func extr n.output in
-        fun_of io.col (fun col ->
-          let txt = csv.columns.(col) ^": "^ f2s i' ^" for "^ f2s i in
-          [ Widget.text txt ~x ~y ~width ~height ]) ])
+        (* TODO: fun_of io.col? *)
+        let txt = csv.columns.(io.col.value) ^": "^ f2s io.csv_values.(csv.idx) in
+        [ Widget.text txt ~x ~y ~width ~height ])
     | Output ->
-      fun_of outputs (fun ios -> [
+      fun_of outputs (fun ios ->
         let io = find_io ios n.io_key in
-        let extr = csv.extremums.(io.col.value) in
-        let t = io.values.(csv.idx) in
-        let t' = scale_output_rev n.func extr n.output in
-        fun_of io.col (fun col ->
-          let txt = csv.columns.(col) ^": "^ f2s t' ^" for "^ f2s t in
-          [ Widget.text txt ~x ~y ~width ~height ]) ])
+        (* TODO: fun_of io.col? *)
+        let t' = scale_output_rev n.func io.diff_extremums n.output in
+        (* now we have the diff back to CSV proportions. Compute the actual value: *)
+        let undiffed = t' +. io.csv_values.(csv.idx - 1) in
+        let txt = f2s undiffed ^" for "^ f2s io.csv_values.(csv.idx)  in
+        [ Widget.text txt ~x ~y ~width ~height ])
     | Hidden -> group []
 
   let input_from_csv () =
     iter_only Input (fun n ->
       let io = find_io inputs.value n.io_key in
-      let x = io.values.(csv.idx)
+      let x = io.csv_values.(csv.idx)
       and extr = csv.extremums.(io.col.value) in
       let o = scale_input n.func extr x in
       (* Note that we do *not* go through the transfer function itself.
@@ -1416,9 +1415,17 @@ struct
   let id_seq = ref 0
 
   let precomp io () =
-    for i = 0 to Array.length io.values - 1 do
-      io.values.(i) <-
+    for i = 0 to Array.length io.csv_values - 1 do
+      io.csv_values.(i) <-
         CSV.get_value csv io.col.value io.lag.value io.avg.value i
+    done ;
+    (* Compute the exrtremums on this column. *)
+    let diff i = io.csv_values.(i) -. io.csv_values.(i - 1) in
+    io.diff_extremums <- diff 1, diff 1 ;
+    for i = 2 to Array.length io.csv_values - 1 do
+      let d = diff i in
+      let mi, ma = io.diff_extremums in
+      io.diff_extremums <- min mi d, max ma d
     done
 
   let make_ id col lag avg =
@@ -1427,7 +1434,8 @@ struct
         col = Param.make ~on_update:[ set_need_save ] "some IO CSV column" col ;
         lag = Param.make ~on_update:[ set_need_save ; update_max_lag ] "some IO CSV lag" lag ;
         avg = Param.make ~on_update:[ set_need_save ; update_max_lag ] "some IO CSV avg" avg ;
-        values = Array.make (Array.length csv.lines) 0. } in
+        csv_values = Array.make (Array.length csv.lines) 0. ;
+        diff_extremums = 0., 0. } in
     precomp io () ;
     Param.on_update io.col (precomp io) ;
     Param.on_update io.lag (precomp io) ;
@@ -1511,15 +1519,16 @@ struct
     let tot_err, _ =
       fold_only Output (fun (e, i) n ->
         let io = find_io outputs.value n.io_key in
-        let t = io.values.(csv.idx)
-        and extr = csv.extremums.(io.col.value) in
+        let t = io.csv_values.(csv.idx) -. io.csv_values.(csv.idx - 1)
+        and extr = io.diff_extremums in
         (* Same remark as in forward_propagation regarding the
          * transfer function of output neurons. *)
         let r = scale_output_rev n.func extr n.output in
         n.dE_dOutput <- (r -. t) /. (snd extr -. fst extr) ;
         assert (Float.compare nan n.dE_dOutput <> 0) ;
-        if io.avg.value = 0 then (* TODO: predict for avg <> 0 *)
-          CSV.predict csv io.lag.value io.col.value r ;
+        if io.avg.value = 0 then ( (* TODO: predict for avg <> 0 *)
+          let undiffed = r +. io.csv_values.(csv.idx) in
+          CSV.predict csv io.lag.value io.col.value undiffed) ;
         e +. 0.5 *. sq n.dE_dOutput,
         i + 1
       ) (0., 0) in
@@ -1543,7 +1552,9 @@ struct
 
   let step () =
     if is_running.value then (
-      CSV.next !max_lag csv ;
+      (* 1 is for being able to diff; !max_lag is actually the max of
+       * lag + avg. We want twice that so that, again, we can diff. *)
+      CSV.next (1 + 2 * !max_lag) csv ;
       Neuron.input_from_csv () ;
 
       Neuron.forward_propagation () ;
