@@ -7,7 +7,7 @@ let debug = true
 let f2i = int_of_float
 let i2f = float_of_int
 
-let f2s v = Printf.sprintf "%+.3f" v
+let f2s v = Printf.sprintf "%+.4f" v
 
 (* Activation Functions *)
 
@@ -543,42 +543,50 @@ module Graph =
 struct
   type t =
     { values : float array ;
-      accum : float array ;
       title : string ;
+      mutable last_val : float ;
+      mutable next_idx : int ;
       mutable max : float ;
-      mutable min : float }
+      mutable min : float ;
+      mutable accum : float ;
+      mutable nb_accums : int ;
+      mutable nb_shrinks : int }
 
-  let scroll g =
+  let compress g =
     let len = Array.length g.values in
-    let speed i = (i2f i /. i2f len) ** 4. in
-    for i = 0 to len - 2 do
-      g.accum.(i) <- g.accum.(i) +. speed i ;
-      if g.accum.(i) >= 1. then (
-        g.values.(i) <- max g.values.(i) g.values.(i + 1) ;
-        g.accum.(i) <- g.accum.(i) -. 1. ;
-        for j = i + 1 to len - 2 do
-          g.accum.(j) <- g.accum.(j) -. 1. ;
-          g.values.(j) <- g.values.(j + 1)
-        done
-      )
-    done
+    for i = 0 to len/2 - 1 do
+      g.values.(i) <- max g.values.(i*2) g.values.(i*2+1)
+    done ;
+    g.next_idx <- len/2 ;
+    g.nb_shrinks <- g.nb_shrinks + 1
 
   let push g v =
-    scroll g ;
+    g.last_val <- v ;
+    if g.next_idx >= Array.length g.values then compress g ;
     g.min <- min g.min v ;
     g.max <- max g.max v ;
-    g.values.(Array.length g.values - 1) <- v
+    g.accum <- g.accum +. v ;
+    g.nb_accums <- g.nb_accums + 1 ;
+    if g.nb_accums > g.nb_shrinks then (
+      g.values.(g.next_idx) <- g.accum  /. (2. ** i2f g.nb_shrinks) ;
+      g.next_idx <- g.next_idx + 1 ;
+      g.accum <- 0. ;
+      g.nb_accums <- 0)
 
   let make title len =
-    { values = Array.make len 0. ;
-      accum = Array.make len 0. ;
-      title ; max = 0. ; min = 0. }
+    { values = Array.make len 0. ; title ;
+      last_val = 0. ; next_idx = 0 ; max = 0. ; min = 0. ;
+      accum = 0. ; nb_accums = 0 ; nb_shrinks = 0 }
 
   let reset g =
     for i = 0 to Array.length g.values - 1 do
       g.values.(i) <- 0. ;
-      g.accum.(i) <- 0.
     done ;
+    g.last_val <- 0. ;
+    g.next_idx <- 0 ;
+    g.nb_shrinks <- 0 ;
+    g.nb_accums <- 0 ;
+    g.accum <- 0. ;
     g.max <- 0. ;
     g.min <- 0.
 
@@ -587,16 +595,14 @@ struct
     Param.change p
 
   let render g ~x ~y ~width ~height =
-    ignore g ; ignore x ; ignore y ; ignore height ; ignore width ;
     let len = Array.length g.values in
     let title =
-      let last_val = g.values.(len - 1) in
-      let txt = g.title ^":"^ f2s last_val in
+      let txt = g.title ^":"^ f2s g.last_val in
       Widget.text txt ~x ~y:(y + height - Layout.text_line_height) ~width ~height:Layout.text_line_height in
     let bg = Widget.rect (c 0.9 0.9 0.9) ~x ~y ~width ~height in
-    let y_scale = if g.max = g.min then 0.
-                  else i2f height /. (g.max -. g.min) in
-    let v2y v = (v -. g.min) *. y_scale in
+    let v2y v = if g.max = g.min then 0. else
+      let v' = (v -. g.min) /. (g.max -. g.min) in
+      v' ** 0.1 *. i2f height in
     let t2x t =
       i2f width *. i2f t /. i2f len in
     let axis =
@@ -614,10 +620,10 @@ struct
           let poly = Poly.insert_after poly (point i) in
           append (i + incr) incr limit poly
       in
-      let poly = append 0 1 len Poly.empty |>
-                 append (len-1) ~-1 ~-1 in
+      let poly = Poly.insert_after Poly.empty (pf (t2x 0) (v2y 0.)) in
+      let poly = Poly.insert_after poly (pf (t2x (g.next_idx - 1)) (v2y 0.)) in
+      let poly = append (g.next_idx - 1) ~-1 ~-1 poly in
       try
-        let poly = Algo.inflate (K.of_int 1) poly in
         Ogli_render.shape_of_polys [ c 0.6 0.6 0.6, [ poly ] ] (pi x y) []
       with e ->
         Format.printf "Cannot render graph as poly@ %a@ because of %s at %s@."
@@ -982,7 +988,7 @@ struct
         and dst = to_pos +~ orig in
         let dy = K.half (K.sub dst.(1) src.(1)) in
         let ctrl = p K.zero dy in
-        let dendrit_width = min 10. (0.55 +. abs_float weight) in
+        let dendrit_width = min 10. (0.75 +. abs_float weight) in
         let poly = Path.start src |>
                    Path.bezier_to dst
                      [ src +~ ctrl ; dst -~ ctrl ] |>
@@ -1462,7 +1468,7 @@ struct
   let nb_batches = ref 0
   let minibatch_steps = ref 0
   let nb_steps_update = Param.make "nb_steps should be refreshed" () (* TODO: Param.make ~update_every:16 ? *)
-  let tot_err_history = 150
+  let tot_err_history = 350
   let tot_err_graph = Param.make "total error graph" (Graph.make "Error" tot_err_history)
 
   let accum_gradient n =
@@ -1557,12 +1563,12 @@ struct
       incr nb_steps ;
       if !rem_steps = 0 then Param.set is_running false ;
       (* Refresh params now and then: *)
-      if !nb_steps land 15 = 0 || !rem_steps = 0 then (
+      if !nb_steps land 31 = 0 || !rem_steps = 0 then (
         Param.change nb_steps_update ;
         Param.change tot_err_graph ;
         Neuron.touch_hovered () ;
         set_need_save ()) ;
-      if !nb_steps land 31 = 0 || !rem_steps = 0 then
+      if !nb_steps land 63 = 0 || !rem_steps = 0 then
         Neuron.refresh_io_map ())
 end
 
