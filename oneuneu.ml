@@ -1527,7 +1527,7 @@ struct
         n.dE_dOutput <- (r -. t) /. (snd extr -. fst extr) ;
         assert (Float.compare nan n.dE_dOutput <> 0) ;
         if io.avg.value = 0 then ( (* TODO: predict for avg <> 0 *)
-          let undiffed = r +. io.csv_values.(csv.idx) in
+          let undiffed = r +. io.csv_values.(csv.idx - 1) in
           CSV.predict csv io.lag.value io.col.value undiffed) ;
         e +. 0.5 *. sq n.dE_dOutput,
         i + 1
