@@ -1516,22 +1516,21 @@ struct
 
   let set_output_and_err () =
     let open Neuron in
-    let tot_err, _ =
-      fold_only Output (fun (e, i) n ->
+    let tot_err =
+      fold_only Output (fun e n ->
         let io = find_io outputs.value n.io_key in
-        let t = io.csv_values.(csv.idx) -. io.csv_values.(csv.idx - 1)
+        let target = io.csv_values.(csv.idx) -. io.csv_values.(csv.idx - 1)
         and extr = io.diff_extremums in
         (* Same remark as in forward_propagation regarding the
          * transfer function of output neurons. *)
         let r = scale_output_rev n.func extr n.output in
-        n.dE_dOutput <- (r -. t) /. (snd extr -. fst extr) ;
+        n.dE_dOutput <- (r -. target) /. (snd extr -. fst extr) ;
         assert (Float.compare nan n.dE_dOutput <> 0) ;
         if io.avg.value = 0 then ( (* TODO: predict for avg <> 0 *)
           let undiffed = r +. io.csv_values.(csv.idx - 1) in
           CSV.predict csv io.lag.value io.col.value undiffed) ;
-        e +. 0.5 *. sq n.dE_dOutput,
-        i + 1
-      ) (0., 0) in
+        e +. 0.5 *. sq n.dE_dOutput
+      ) 0. in
     tot_err
 
   let back_propagation () =
