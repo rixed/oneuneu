@@ -1692,7 +1692,11 @@ let render_result_controls ~x ~y ~width ~height =
     [| 0., "0" ; 0.1, "0.1" ; 0.5, "0.5" ;
        0.9, "0.9" ; 0.95, "0.95" ; 0.99, "0.99" |]
   and minibatch_options =
-    [| 1, "1" ; 10, "10" ; 100, "100" ; 1_000, "1,000" ; 10_000, "10,000" |]
+    Array.filter (fun (v, _n) ->
+      v <= Array.length csv.lines
+    ) [| 1, "1" ; 10, "10" ; 100, "100" ; 1_000, "1,000" ; 10_000, "10,000" ;
+         100_000, "100,000" ; 1_000_000, "1,000,000" ; 10_000_000, "10,000,000" ;
+         Array.length csv.lines, "full-batch" |]
   and test_set_size_options =
     let p n =
       let l = Array.length csv.lines in (n*l + l/2) / 100 in
