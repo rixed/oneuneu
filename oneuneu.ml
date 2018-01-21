@@ -881,17 +881,6 @@ struct
           not (a.dest.layer = layer && Map.mem a.dest.io_key !old)
         ) n.axons)
 
-  let rearrange_input_neurons () = rearrange_io_neurons Input inputs.value Layout.input_width.value
-  let rearrange_output_neurons () = rearrange_io_neurons Output outputs.value Layout.output_width.value
-  let () =
-    Param.on_update Layout.neural_net_height (fun () ->
-      rearrange_input_neurons () ;
-      rearrange_output_neurons ()) ;
-    Param.on_update inputs rearrange_input_neurons ;
-    Param.on_update Layout.input_width rearrange_input_neurons ;
-    Param.on_update outputs rearrange_output_neurons ;
-    Param.on_update Layout.output_width rearrange_output_neurons
-
   (* Similarly, rearrange hidden neurons layers *)
   let rearrange_hidden_neurons () =
     (* Start by getting all the defined layers: *)
@@ -909,24 +898,55 @@ struct
         let (_old_depth, (nb_neurons, neurons)), rem_layers =
           Map.pop_min_binding rem_layers in
         let y = i2f Layout.neural_net_height.value -. i2f (new_depth + 1) *. dy in
-        let dx = i2f Layout.(screen_width.value - control_column_width.value) /.
-                 i2f (nb_neurons + 1) in
-        List.fast_sort (fun n1 n2 -> Int.compare n1.id n2.id) neurons |>
+        (* TODO: offset hidden layers according to where their cnx come from/goes to *)
+        let neurons = List.fast_sort (fun n1 n2 -> Int.compare n1.id n2.id) neurons in
+        let xmima =
+          let extr xmima n =
+            let x = K.to_float n.position.value.(0) in
+            match xmima with
+            | None -> Some (x, x)
+            | Some (xmi, xma) ->
+                Some (min xmi x, max xma x) in
+          List.fold_left (fun xmima n ->
+            (*let xmima =*) List.fold_left (fun xmima d ->
+              extr xmima d.source
+            ) xmima n.dendrits (*in
+            List.fold_left (fun xmima a ->
+              extr xmima a.dest
+            ) xmima n.axons*)
+          ) None neurons in
+        let xmi, xma =
+          xmima |? (0., i2f Layout.(screen_width.value - control_column_width.value)) in
+        let dx = (xma -. xmi) /. i2f (nb_neurons + 1) in
         List.iteri (fun i n ->
           n.io_key <- new_depth ;
           let disp = 7. and a = i2f n.id in
-          let position = pf (i2f (i + 1) *. dx +. disp *. cos a)
+          let position = pf (xmi +. i2f (i + 1) *. dx +. disp *. cos a)
                             (y +. disp *. sin a) in
           if not (Point.eq position n.position.value) then
-            Param.set n.position position) ;
+            Param.set n.position position
+        ) neurons ;
         loop (new_depth + 1) rem_layers
     in
     loop 0 layers
 
+  let rearrange_input_neurons () = rearrange_io_neurons Input inputs.value Layout.input_width.value
+  let rearrange_output_neurons () = rearrange_io_neurons Output outputs.value Layout.output_width.value
+  let rearrange_all_neurons () =
+    (* Must be input then hidden then output, so that to layout a layers we
+     * can use positions of previous one: *)
+    rearrange_input_neurons () ;
+    rearrange_hidden_neurons () ;
+    rearrange_output_neurons ()
+
   let () =
-    Param.on_update Layout.neural_net_height rearrange_hidden_neurons ;
-    Param.on_update Layout.screen_width rearrange_hidden_neurons ;
-    Param.on_update Layout.control_column_width rearrange_hidden_neurons
+    Param.on_update Layout.neural_net_height rearrange_all_neurons ;
+    Param.on_update Layout.screen_width rearrange_all_neurons ;
+    Param.on_update Layout.control_column_width rearrange_all_neurons ;
+    Param.on_update inputs rearrange_all_neurons ;
+    Param.on_update Layout.input_width rearrange_all_neurons ;
+    Param.on_update outputs rearrange_output_neurons ;
+    Param.on_update Layout.output_width rearrange_output_neurons
 
   let unselect_all () =
     iter_all (fun n -> n.selected <- false) ;
