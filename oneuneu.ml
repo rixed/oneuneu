@@ -1564,10 +1564,10 @@ struct
       let open Neuron in
       iter_all (adjust_dendrits learn_speed momentum)
 
-  let learn_speed = Param.make "learning speed" 0.03
-  let momentum = Param.make "momentum" 0.
-  let minibatch_size = Param.make "minibatch size" 1
-  let test_set_size = Param.make "test set size" 0
+  let learn_speed = Param.make ~on_update:[ set_need_save ] "learning speed" 0.03
+  let momentum = Param.make ~on_update:[ set_need_save ] "momentum" 0.
+  let minibatch_size = Param.make ~on_update:[ set_need_save ] "minibatch size" 1
+  let test_set_size = Param.make ~on_update:[ set_need_save ] "test set size" 0
 
   let step () =
     if is_running.value then (
