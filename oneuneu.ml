@@ -1678,12 +1678,12 @@ struct
           adjust_weights momentum.value tot_err ;
           minibatch_steps := 0 ;
           Param.incr nb_batches ;
+          Graph.push tot_err_graph.value tot_err ;
+          Param.change tot_err_graph ;
           (* Refresh the dendrits from time to time: *)
           if nb_batches.value land 63 = 0 then
             Param.change Neuron.neurons) ;
       ) ;
-
-      Graph.push tot_err_graph.value tot_err ;
 
       decr rem_steps ;
       incr nb_steps ;
@@ -1691,7 +1691,6 @@ struct
       (* Refresh params now and then: *)
       if !nb_steps land 31 = 0 || !rem_steps = 0 then (
         Param.change nb_steps_update ;
-        Param.change tot_err_graph ;
         Neuron.touch_hovered () ;
         set_need_save ()) ;
       if !nb_steps land 63 = 0 || !rem_steps = 0 then
