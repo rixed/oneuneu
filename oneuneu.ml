@@ -1114,6 +1114,7 @@ struct
             let connect from to_ _ _ =
               connect_from_to from to_ ;
               Param.none box_selection ;
+              rearrange_hidden_neurons () ;
               unselect_all ()
             and connect_per_layers sel _ _ =
               (* group by layer *)
@@ -1130,6 +1131,7 @@ struct
                 and to_ = Map.find keys.(i + 1) by_y in
                 connect_from_to from to_
               done ;
+              rearrange_hidden_neurons () ;
               Param.none box_selection ;
               unselect_all ()
             and connect_fully sel _ _ =
@@ -1139,10 +1141,12 @@ struct
                     connect_from_to [ from ] [ to_ ]
                 ) sel
               ) sel ;
+              rearrange_hidden_neurons () ;
               Param.none box_selection ;
               unselect_all ()
             and disconnect_all sels _ _ =
               List.iter (fun n -> disconnect_from sels n) sels ;
+              rearrange_hidden_neurons () ;
               Param.none box_selection ;
               unselect_all ()
             and del shifted _ = (* Delete all hidden neurons that are selected *)
