@@ -1665,7 +1665,7 @@ struct
           Graph.push tot_err_graph.value tot_err ;
           Param.change tot_err_graph ;
           (* Refresh the dendrits from time to time: *)
-          if nb_batches.value land 63 = 0 then
+          if nb_batches.value land 7 = 0 then
             Param.change Neuron.neurons) ;
       ) ;
 
