@@ -7,7 +7,7 @@ let debug = true
 let f2i = int_of_float
 let i2f = float_of_int
 
-let f2s v = Printf.sprintf "%+.4f" v
+let f2s v = Printf.sprintf "%+.4g" v
 
 (* Activation Functions *)
 
@@ -1522,9 +1522,9 @@ struct
   let accum_gradient n =
     let open Neuron in
     List.iter (fun d ->
-        let de_dw = d.source.output *. n.dE_dOutput in
-        d.gradient <- d.gradient +. de_dw ;
-      ) n.dendrits
+      let de_dw = d.source.output *. n.dE_dOutput in
+      d.gradient <- d.gradient +. de_dw ;
+    ) n.dendrits
 
   let adjust_dendrits learn_rate momentum n =
     let open Neuron in
