@@ -650,7 +650,6 @@ struct
       mutable gradient : float (* accumulated during mini-batches *) ;
       mutable prev_gradient : float ;
       mutable prev_weight_adj : float (* for momentum *) ;
-      mutable prev_prev_weight_adj : float (* for undoing prev change *) ;
       mutable learn_gain : float (* When using individual learn rates *) }
   and axon =
     { dest : t ;
@@ -708,7 +707,6 @@ struct
   (* We must unserialize all neurons first, then all dendrits, then all axons. *)
   let unserialize_dendrit neurons s =
     { weight = s.ser_weight ; prev_weight_adj = s.ser_prev_weight_adj ;
-      prev_prev_weight_adj = 0. (* Will not be used because we restart without prev_tot_err *) ;
       gradient = 0. (* restart from start of mini-batch *) ;
       prev_gradient = 0. ;
       learn_gain = s.ser_learn_gain ;
@@ -735,8 +733,7 @@ struct
   let dendrit source =
     { source ; weight = random_weight () ;
       gradient = 0. ; prev_gradient = 0. ;
-      prev_prev_weight_adj = 0. ; prev_weight_adj = 0. ;
-      learn_gain = 1. }
+      prev_weight_adj = 0. ; learn_gain = 1. }
 
   let id_seq = ref 0
   let make io_key layer position =
@@ -750,7 +747,6 @@ struct
     List.iter (fun d ->
       d.weight <- random_weight () ;
       d.prev_weight_adj <- 0. ;
-      d.prev_prev_weight_adj <- 0. ;
       d.gradient <- 0. ;
       d.prev_gradient <- 0.
     ) n.dendrits ;
@@ -1535,19 +1531,13 @@ struct
     List.iter (fun d ->
       let adj = momentum *. d.prev_weight_adj -. learn_rate *. d.gradient in
       d.weight <- d.weight +. adj ;
-      d.prev_prev_weight_adj <- d.prev_weight_adj ;
       d.prev_weight_adj <- adj ;
-      d.prev_gradient <- d.gradient ;
       d.gradient <- 0.
     ) n.dendrits
 
-  (* Undo what the last adjust_dendrits did: *)
-  let undo_last_dendrit_changes n =
-    let open Neuron in
-    List.iter (fun d ->
-      d.weight <- d.weight -. d.prev_weight_adj ;
-      d.prev_weight_adj <- d.prev_prev_weight_adj ;
-    ) n.dendrits
+  let cap v mi ma =
+    if v < mi then mi else
+    if v > ma then ma else v
 
   let adjust_dendrits_individually learn_rate n =
     let open Neuron in
@@ -1555,14 +1545,10 @@ struct
       let new_learn_gain =
         if d.prev_gradient *. d.gradient >= 0. then d.learn_gain +. 0.05
         else d.learn_gain *. 0.95 in
-      let new_learn_gain =
-        if new_learn_gain < 0.1 then 0.1 else
-        if new_learn_gain > 10. then 10. else
-        new_learn_gain in
+      let new_learn_gain = cap new_learn_gain 0.1 10. in
       d.learn_gain <- new_learn_gain ;
       let adj = -. learn_rate *. d.learn_gain *. d.gradient in
       d.weight <- d.weight +. adj ;
-      d.prev_prev_weight_adj <- d.prev_weight_adj ;
       d.prev_weight_adj <- adj ;
       d.prev_gradient <- d.gradient ;
       d.gradient <- 0.
@@ -1574,14 +1560,10 @@ struct
       let new_learn_gain =
         if d.prev_weight_adj *. d.gradient <= 0. then d.learn_gain +. 0.05
         else d.learn_gain *. 0.95 in
-      let new_learn_gain =
-        if new_learn_gain < 0.1 then 0.1 else
-        if new_learn_gain > 10. then 10. else
-        new_learn_gain in
+      let new_learn_gain = cap new_learn_gain 0.1 10. in
       d.learn_gain <- new_learn_gain ;
       let adj = momentum *. d.prev_weight_adj -. learn_rate *. d.learn_gain *. d.gradient in
       d.weight <- d.weight +. adj ;
-      d.prev_prev_weight_adj <- d.prev_weight_adj ;
       d.prev_weight_adj <- adj ;
       d.prev_gradient <- d.gradient ;
       d.gradient <- 0.
@@ -1640,22 +1622,20 @@ struct
     | FixedGlobal ->
         iter_all (adjust_dendrits learn_rate.value momentum)
     | AutoAdapt ->
-        (match !prev_tot_err with
-        | Some pte ->
-            if tot_err > pte +. 1e-10 then (
-              iter_all undo_last_dendrit_changes ;
-              Param.set auto_learn_rate (auto_learn_rate.value *. 0.5)
-            ) else (
-              if tot_err < pte then
-                Param.set auto_learn_rate (auto_learn_rate.value *. 1.01) ;
-              prev_tot_err := Some tot_err ;
-              iter_all (adjust_dendrits auto_learn_rate.value momentum)
-            ) ;
-            Format.printf "prev_tot_err=%f, tot_err=%f, auto_learn_rate=%f@."
-              pte tot_err auto_learn_rate.value
-        | None ->
-            prev_tot_err := Some tot_err ;
-            iter_all (adjust_dendrits auto_learn_rate.value momentum))
+        Option.may (fun prev_tot_err ->
+          let new_learn_rate =
+            if tot_err > prev_tot_err +. 1e-10 then
+              cap (auto_learn_rate.value *. 0.5) 1e-10 10.
+            else if tot_err < prev_tot_err then
+              cap (auto_learn_rate.value *. 1.01) 1e-10 10.
+            else auto_learn_rate.value in
+          if auto_learn_rate.value <> new_learn_rate then
+            Param.set auto_learn_rate new_learn_rate ;
+          Format.printf "prev_tot_err=%g, tot_err=%g, auto_learn_rate=%g@."
+            prev_tot_err tot_err auto_learn_rate.value
+        ) !prev_tot_err ;
+        iter_all (adjust_dendrits auto_learn_rate.value momentum) ;
+        prev_tot_err := Some tot_err
     | AutoAdaptPerWeight when momentum > 0. ->
         iter_all (adjust_dendrits_individually_with_momentum learn_rate.value momentum)
     | AutoAdaptPerWeight ->
