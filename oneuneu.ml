@@ -1825,7 +1825,8 @@ let render_result_controls ~x ~y ~width ~height =
         Simulation.minibatch_steps := 0 ;
         Simulation.prev_tot_err := None ;
         Param.set Simulation.auto_learn_rate 0.0001 ;
-        Param.change Simulation.nb_steps_update)
+        Param.change Simulation.nb_steps_update ;
+        Param.set Simulation.nb_batches 0)
     and y = y + height - 2 * Layout.text_line_height and height = Layout.text_line_height in
     if is_running then [
       Widget.button "Pause" ~on_click:(run_for 0) ~x ~y ~width ~height
