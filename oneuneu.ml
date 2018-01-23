@@ -8,6 +8,7 @@ let f2i = int_of_float
 let i2f = float_of_int
 
 let f2s v = Printf.sprintf "%+.4g" v
+let i2s = string_of_int
 
 (* Activation Functions *)
 
@@ -242,7 +243,7 @@ struct
             if wrap then max else min in
         Param.set param new_val
       in
-      let label = "  "^ string_of_int selected
+      let label = "  "^ i2s selected
       and arrow_w = 10 in
       [ button label ~on_click ~x ~y ~width ~height ;
         (if wrap || selected > min then
@@ -286,7 +287,7 @@ struct
       name : string }
 
   let random_columns nb_cols =
-    Array.init nb_cols (fun c -> "column "^ string_of_int c)
+    Array.init nb_cols (fun c -> "column "^ i2s c)
 
   let make columns lines name =
     let nb_lines = Array.length lines
@@ -595,6 +596,12 @@ struct
     let title =
       let txt = g.title ^":"^ f2s g.last_val in
       Widget.text txt ~x ~y:(y + height - Layout.text_line_height) ~width ~height:Layout.text_line_height in
+    let subtitle =
+      if g.nb_shrinks > 0 then
+        let txt = "Shrinked "^ i2s g.nb_shrinks ^" times" in
+        Widget.text txt ~x ~y:(y + height - 2 * Layout.text_line_height) ~width ~height:Layout.text_line_height
+      else
+        group [] in
     let bg = Widget.rect (c 0.9 0.9 0.9) ~x ~y ~width ~height in
     let v2y v = if g.max = g.min then 0. else
       let v' = (v -. g.min) /. (g.max -. g.min) in
@@ -619,6 +626,7 @@ struct
       let poly = Poly.insert_after Poly.empty (pf (t2x 0) (v2y 0.)) in
       let poly = Poly.insert_after poly (pf (t2x (g.next_idx - 1)) (v2y 0.)) in
       let poly = append (g.next_idx - 1) ~-1 ~-1 poly in
+      Format.printf "poly=%a@." Poly.print poly ;
       try
         Ogli_render.shape_of_polys [ c 0.6 0.6 0.6, [ poly ] ] (pi x y) []
       with e ->
@@ -628,7 +636,7 @@ struct
           (Printexc.get_backtrace ()) ;
         group []
     in
-    group [ bg ; plot ; axis ; tick ; title ]
+    group [ bg ; plot ; axis ; tick ; title ; subtitle ]
 end
 
 (* Neurons & Neural Net (UI only, see neuron.ml for actual neurons simulation *)
@@ -647,7 +655,6 @@ struct
   type dendrit =
     { source : t ;
       mutable weight : float ;
-      mutable gradient : float (* accumulated during mini-batches *) ;
       mutable prev_gradient : float ;
       mutable prev_weight_adj : float (* for momentum *) ;
       mutable learn_gain : float (* When using individual learn rates *) }
@@ -672,7 +679,7 @@ struct
       io_map : float array array }
 
   let make_position id pos =
-    Param.make ("position of neuron#"^ string_of_int id) pos
+    Param.make ("position of neuron#"^ i2s id) pos
 
   let make_io_map () =
     Array.init io_map_sz (fun _ -> Array.make io_map_sz 0.)
@@ -707,8 +714,7 @@ struct
   (* We must unserialize all neurons first, then all dendrits, then all axons. *)
   let unserialize_dendrit neurons s =
     { weight = s.ser_weight ; prev_weight_adj = s.ser_prev_weight_adj ;
-      gradient = 0. (* restart from start of mini-batch *) ;
-      prev_gradient = 0. ;
+      prev_gradient = 0. (* restart from start of mini-batch *) ;
       learn_gain = s.ser_learn_gain ;
       source = Array.find (fun n -> n.id = s.ser_source) neurons }
   let unserialize_axon neurons s =
@@ -731,8 +737,7 @@ struct
     (Random.float 1. -. 0.5) *. init_weight_amplitude
 
   let dendrit source =
-    { source ; weight = random_weight () ;
-      gradient = 0. ; prev_gradient = 0. ;
+    { source ; weight = random_weight () ; prev_gradient = 0. ;
       prev_weight_adj = 0. ; learn_gain = 1. }
 
   let id_seq = ref 0
@@ -747,7 +752,6 @@ struct
     List.iter (fun d ->
       d.weight <- random_weight () ;
       d.prev_weight_adj <- 0. ;
-      d.gradient <- 0. ;
       d.prev_gradient <- 0.
     ) n.dendrits ;
     n.dE_dOutput <- 0. ;
@@ -1349,7 +1353,7 @@ struct
                   | Horizontal ->
                       Param.set selected_for_axis (input.id, sel_y)) ;
                   refresh_io_map ()) in
-              let but = Widget.button ~selected ?on_click (string_of_int i) ~x ~y ~width:but_width ~height:but_height in
+              let but = Widget.button ~selected ?on_click (i2s i) ~x ~y ~width:but_width ~height:but_height in
               loop (but :: buts) (x + dx) (y - dy) (i + 1) inputs in
         let x = x + dx and y = y + nb_inputs * dy in
         loop [] x y 1 (List.rev inputs)) ])
@@ -1375,8 +1379,8 @@ struct
      * back propagating of course!). Then we restart the sim as normal.
      * Those maps can also be used to display the neuron instead of the big dot. *)
     let render_details_of_neuron n =
-      [ Widget.text ("Neuron "^ string_of_int n.id ^(if n.layer = Hidden then "("^ string_of_int n.io_key ^")" else "")) ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
-        Widget.text (string_of_int (List.length n.dendrits) ^"/"^ string_of_int (List.length n.axons) ^"cnx") ~x:(x + width/2) ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
+      [ Widget.text ("Neuron "^ i2s n.id ^(if n.layer = Hidden then "("^ i2s n.io_key ^")" else "")) ~x ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
+        Widget.text (i2s (List.length n.dendrits) ^"/"^ i2s (List.length n.axons) ^"cnx") ~x:(x + width/2) ~y:(y + height - 1 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
         Widget.text (string_of_transfer n.func) ~x ~y:(y + height - 2 * Layout.text_line_height) ~width:(width/3) ~height:Layout.text_line_height ;
         Widget.text ("dE/dO="^ f2s n.dE_dOutput) ~x:(x + width/3) ~y:(y + height - 2 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ;
         Widget.text ("Last Output:"^ f2s n.output) ~x ~y:(y + height - 3 * Layout.text_line_height) ~width ~height:Layout.text_line_height ;
@@ -1519,20 +1523,13 @@ struct
   let tot_err_history = 350
   let tot_err_graph = Param.make "total error graph" (Graph.make "Error" tot_err_history)
 
-  let accum_gradient n =
-    let open Neuron in
-    List.iter (fun d ->
-      let de_dw = d.source.output *. n.dE_dOutput in
-      d.gradient <- d.gradient +. de_dw ;
-    ) n.dendrits
-
   let adjust_dendrits learn_rate momentum n =
     let open Neuron in
     List.iter (fun d ->
-      let adj = momentum *. d.prev_weight_adj -. learn_rate *. d.gradient in
+      let de_dw = d.source.output *. n.dE_dOutput in
+      let adj = momentum *. d.prev_weight_adj -. learn_rate *. de_dw in
       d.weight <- d.weight +. adj ;
-      d.prev_weight_adj <- adj ;
-      d.gradient <- 0.
+      d.prev_weight_adj <- adj
     ) n.dendrits
 
   let cap v mi ma =
@@ -1542,31 +1539,31 @@ struct
   let adjust_dendrits_individually learn_rate n =
     let open Neuron in
     List.iter (fun d ->
+      let de_dw = d.source.output *. n.dE_dOutput in
       let new_learn_gain =
-        if d.prev_gradient *. d.gradient >= 0. then d.learn_gain +. 0.05
+        if d.prev_gradient *. de_dw >= 0. then d.learn_gain +. 0.05
         else d.learn_gain *. 0.95 in
       let new_learn_gain = cap new_learn_gain 0.1 10. in
       d.learn_gain <- new_learn_gain ;
-      let adj = -. learn_rate *. d.learn_gain *. d.gradient in
+      let adj = -. learn_rate *. d.learn_gain *. de_dw in
       d.weight <- d.weight +. adj ;
       d.prev_weight_adj <- adj ;
-      d.prev_gradient <- d.gradient ;
-      d.gradient <- 0.
+      d.prev_gradient <- de_dw ;
     ) n.dendrits
 
   let adjust_dendrits_individually_with_momentum learn_rate momentum n =
     let open Neuron in
     List.iter (fun d ->
+      let de_dw = d.source.output *. n.dE_dOutput in
       let new_learn_gain =
-        if d.prev_weight_adj *. d.gradient <= 0. then d.learn_gain +. 0.05
+        if d.prev_weight_adj *. de_dw <= 0. then d.learn_gain +. 0.05
         else d.learn_gain *. 0.95 in
       let new_learn_gain = cap new_learn_gain 0.1 10. in
       d.learn_gain <- new_learn_gain ;
-      let adj = momentum *. d.prev_weight_adj -. learn_rate *. d.learn_gain *. d.gradient in
+      let adj = momentum *. d.prev_weight_adj -. learn_rate *. d.learn_gain *. de_dw in
       d.weight <- d.weight +. adj ;
       d.prev_weight_adj <- adj ;
-      d.prev_gradient <- d.gradient ;
-      d.gradient <- 0.
+      d.prev_gradient <- de_dw
     ) n.dendrits
 
   (* Assuming we know how n's children influence the error (dE_dOutput),
@@ -1581,31 +1578,36 @@ struct
       ) 0. n.axons ;
     assert (Float.compare nan n.dE_dOutput <> 0)
 
-  let set_output_and_err () =
+  let set_output_and_err do_train =
     let open Neuron in
+    iter_only Output (fun n ->
+      let io = find_io outputs.value n.io_key in
+      let target = io.csv_values.(csv.idx) -. io.csv_values.(csv.idx - 1)
+      and extr = io.diff_extremums in
+      (* Same remark as in forward_propagation regarding the
+       * transfer function of output neurons. *)
+      let r = scale_output_rev n.func extr n.output in
+      if do_train then (
+        let err = (r -. target) /. (snd extr -. fst extr) in
+        n.dE_dOutput <- n.dE_dOutput +. err ;
+        assert (Float.compare nan n.dE_dOutput <> 0)) ;
+      if io.avg.value = 0 then ( (* TODO: predict for avg <> 0 *)
+        let undiffed = r +. io.csv_values.(csv.idx - 1) in
+        CSV.predict csv io.lag.value io.col.value undiffed)
+    )
+
+  let back_propagation nb_samples =
+    let open Neuron in
+    (* Scale down the dE_dOutput of the error: *)
+    let s = 1. /. i2f nb_samples in
     let tot_err =
       fold_only Output (fun e n ->
-        let io = find_io outputs.value n.io_key in
-        let target = io.csv_values.(csv.idx) -. io.csv_values.(csv.idx - 1)
-        and extr = io.diff_extremums in
-        (* Same remark as in forward_propagation regarding the
-         * transfer function of output neurons. *)
-        let r = scale_output_rev n.func extr n.output in
-        n.dE_dOutput <- (r -. target) /. (snd extr -. fst extr) ;
-        assert (Float.compare nan n.dE_dOutput <> 0) ;
-        if io.avg.value = 0 then ( (* TODO: predict for avg <> 0 *)
-          let undiffed = r +. io.csv_values.(csv.idx - 1) in
-          CSV.predict csv io.lag.value io.col.value undiffed) ;
+        n.dE_dOutput <- s *. n.dE_dOutput ;
         e +. 0.5 *. sq n.dE_dOutput
       ) 0. in
-    tot_err
-
-  let back_propagation () =
-    let open Neuron in
     (* Now we can back-propagate to the hidden layer *)
     iter_back_but Output propagate_err_backward ;
-    (* Accumulate the gradient *)
-    iter_all accum_gradient
+    tot_err
 
   let momentum = Param.make ~on_update:[ set_need_save ] "momentum" 0.
   let minibatch_size = Param.make ~on_update:[ set_need_save ] "minibatch size" 1
@@ -1649,16 +1651,17 @@ struct
       Neuron.input_from_csv () ;
 
       Neuron.forward_propagation () ;
-      let tot_err = set_output_and_err () in
-      (* Begin with setting the dE_dOutput of the output nodes.
-       * While at it, also save the prediction in the CSV. *)
+      let do_train = csv.idx >= !max_lag + test_set_size.value in
+      set_output_and_err do_train ;
+      (* Begin with accumulating the error into dE_dOutput of the output
+       * nodes. While at it, also save the prediction in the CSV. *)
 
       (* If the line was from the training set we merely skip updating the
        * weights *)
-      if csv.idx >= !max_lag + test_set_size.value then (
-        back_propagation () ;
+      if do_train then (
         incr minibatch_steps ;
         if !minibatch_steps >= minibatch_size.value then (
+          let tot_err = back_propagation !minibatch_steps in
           adjust_weights momentum.value tot_err ;
           minibatch_steps := 0 ;
           Param.incr nb_batches ;
@@ -1743,7 +1746,7 @@ struct
     else !test_name ^"."
 
   let save _ _ =
-    let fname n = file_prefix ^ string_of_int n
+    let fname n = file_prefix ^ i2s n
     and file_exists fname =
       let open Unix in
       try ignore (stat fname) ; true
@@ -1781,7 +1784,8 @@ struct
         Param.incr Neuron.selection_generation ;
         Simulation.minibatch_steps := 0 ;
         Simulation.prev_tot_err := None ;
-        Param.change Layout.neural_net_height (* trigger the rearrangement of neurons *)))
+        Param.change Layout.neural_net_height ; (* trigger the rearrangement of neurons *)
+        Graph.reset_param Simulation.tot_err_graph))
 end
 
 let render_result_controls ~x ~y ~width ~height =
@@ -1835,9 +1839,9 @@ let render_result_controls ~x ~y ~width ~height =
         Widget.button "Step" ~on_click:(run_for 1) ~x:(width/3) ~y ~width:(width/3) ~height ;
         Widget.button "Reset!" ~on_click:reset ~x:(2 * width/3) ~y ~width:(width/3) ~height ]) ;
   fun_of Simulation.nb_steps_update (fun () -> [
-    Widget.text ("Steps: "^ string_of_int !Simulation.nb_steps) ~x ~y:(y + height - 3 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ]) ;
+    Widget.text ("Steps: "^ i2s !Simulation.nb_steps) ~x ~y:(y + height - 3 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ]) ;
   fun_of Simulation.nb_batches (fun nbb -> [
-    Widget.text ("Batches: "^ string_of_int nbb) ~x:(width/2) ~y:(y + height - 3 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ]) ;
+    Widget.text ("Batches: "^ i2s nbb) ~x:(width/2) ~y:(y + height - 3 * Layout.text_line_height) ~width:(width/2) ~height:Layout.text_line_height ]) ;
 
   Widget.text "Test Set Size:" ~x ~y:(y + height - 4 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
   Widget.simple_select test_set_size_options Simulation.test_set_size ~x:(x + label_w) ~y:(y + height - 4 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
