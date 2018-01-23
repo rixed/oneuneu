@@ -598,7 +598,7 @@ struct
       Widget.text txt ~x ~y:(y + height - Layout.text_line_height) ~width ~height:Layout.text_line_height in
     let subtitle =
       if g.nb_shrinks > 0 then
-        let txt = "Shrinked "^ i2s g.nb_shrinks ^" times" in
+        let txt = "Shrunk "^ i2s g.nb_shrinks ^" times" in
         Widget.text txt ~x ~y:(y + height - 2 * Layout.text_line_height) ~width ~height:Layout.text_line_height
       else
         group [] in
