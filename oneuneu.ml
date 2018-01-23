@@ -998,7 +998,6 @@ struct
             Param.set hovered (Some t)
         and on_click shifted _ =
           if shifted then (
-            Format.printf "shift clicked neuron %d@." t.id;
             t.selected <- not t.selected
           ) else (
             unselect_all () ;
@@ -1605,7 +1604,7 @@ struct
     let tot_err =
       fold_only Output (fun e n ->
         n.dE_dOutput <- s *. n.dE_dOutput ;
-        e +. 0.5 *. sq n.dE_dOutput
+        e +. sq n.dE_dOutput
       ) 0. in
     (* Now we can back-propagate to the hidden layer *)
     iter_back_but Output propagate_err_backward ;
