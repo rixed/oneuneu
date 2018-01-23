@@ -623,17 +623,19 @@ struct
           let poly = Poly.insert_after poly (point i) in
           append (i + incr) incr limit poly
       in
-      let poly = Poly.insert_after Poly.empty (pf (t2x 0) (v2y 0.)) in
-      let poly = Poly.insert_after poly (pf (t2x (g.next_idx - 1)) (v2y 0.)) in
-      let poly = append (g.next_idx - 1) ~-1 ~-1 poly in
-      Format.printf "poly=%a@." Poly.print poly ;
-      try
-        Ogli_render.shape_of_polys [ c 0.6 0.6 0.6, [ poly ] ] (pi x y) []
-      with e ->
-        Format.printf "Cannot render graph as poly@ %a@ because of %s at %s@."
-          Poly.print poly
-          (Printexc.to_string e)
-          (Printexc.get_backtrace ()) ;
+      if g.next_idx > 0 then
+        let poly = Poly.insert_after Poly.empty (pf (t2x 0) (v2y 0.)) in
+        let poly = Poly.insert_after poly (pf (t2x (g.next_idx - 1)) (v2y 0.)) in
+        let poly = append (g.next_idx - 1) ~-1 ~-1 poly in
+        try
+          Ogli_render.shape_of_polys [ c 0.6 0.6 0.6, [ poly ] ] (pi x y) []
+        with e ->
+          Format.printf "Cannot render graph as poly@ %a@ because of %s at %s@."
+            Poly.print poly
+            (Printexc.to_string e)
+            (Printexc.get_backtrace ()) ;
+          group []
+      else
         group []
     in
     group [ bg ; plot ; axis ; tick ; title ; subtitle ]
