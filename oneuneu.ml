@@ -1174,6 +1174,7 @@ struct
               (let on_click =
                 if sel_ins <> [] && sel_hids <> [] && sel_outs =  [] then Some (connect sel_ins sel_hids) else
                 if sel_ins =  [] && sel_hids <> [] && sel_outs <> [] then Some (connect sel_hids sel_outs) else
+                if sel_ins <> [] && sel_hids =  [] && sel_outs <> [] then Some (connect sel_ins sel_outs) else
                 None in
               if on_click = None then group [] else
                 Widget.button "Connect" ?on_click ~x ~y:(add_y - 1 * Layout.text_line_height) ~width:control_width ~height:Layout.text_line_height) ;
