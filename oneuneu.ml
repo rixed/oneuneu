@@ -497,8 +497,8 @@ struct
         Widget.text title ~x:(x_of_line start) ~y:(y + height - (set_num + 1) * Layout.text_line_height) ~width ~height:Layout.text_line_height ]
     in
     group [
-      partial_graph min_line (min_line + test_set_sz) (c 0.4 0.75 0.9) "test" 0 ;
-      partial_graph (min_line + test_set_sz) (Array.length csv.lines) (c 0.7 0.7 0.7) "train" 1 ]
+      partial_graph min_line (Array.length csv.lines - test_set_sz) (c 0.7 0.7 0.7) "train" 1 ;
+      partial_graph (Array.length csv.lines - test_set_sz) (Array.length csv.lines) (c 0.4 0.75 0.9) "test" 0 ]
 end
 
 let msaa = ref true
@@ -1653,7 +1653,7 @@ struct
       Neuron.input_from_csv () ;
 
       Neuron.forward_propagation () ;
-      let do_train = csv.idx >= !max_lag + test_set_size.value in
+      let do_train = csv.idx < Array.length csv.lines - test_set_size.value in
       set_output_and_err do_train ;
       (* Begin with accumulating the error into dE_dOutput of the output
        * nodes. While at it, also save the prediction in the CSV. *)
