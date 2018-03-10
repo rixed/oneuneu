@@ -32,22 +32,67 @@ sample CSV files are provided (likely in +/usr/lib/oneuneu+):
 Some command line options are available to enrich the CSV with time-related
 new columns; see +--help+ for more info.
 
+=== Neuron Layout
+
 The program displays some controls on the left and the neural network on the
 right, that you can edit by adding input neurons (at the top), output neurons
 (at the bottom) and hidden neurons (in between).
 
-Each input and output neuron corresponds to some input field from the CSV
-file, that you can choose manipulating the settings of each input/output.
+Each input and output neuron corresponds to some field from the CSV file (or a
+virtual time-related field). You can select the field by using the angle
+brackets around its name once you have added it to the inputs or ouputs. You
+can also decide that the value will lag (so instead of considering the value
+for hat field in the current CSV line the neuron will use instead the value N
+lines before, N being the lag value. Similarly, you can choose to average with
+that value the M previous values. Of course those all this makes sense only if
+the data is ordered in some meaningful way in the CSV file.
+
 You have to link neurons yourself using the +Connect+ buttons that appear
 whenever you have selected some neurons. Information flows from input to
 output, layer after layer.
+
+Selecting a single neuron you can also change its transfer function (sigmoid,
+hyperbolic-tangent or linear).
+
+=== Simulation Parameters
+
+==== Test set size
+
+Online: all lines of the CSV are used for training. Error is measured on the
+training data.
+
+5% - 50%: While the beginning of the CSV file will be used for training, the
+tail of the file will be used for testing only and will not influence the
+weights. A separate error is computed for both parts of the data and is
+displayed whenever the cursor hover an output neuron.
+
+==== Mini-batch size
+
+How many passes do the simulator do before upgrading the weights. 1 means the
+weights will be updated after avery pass, while full-batch means the simulation
+will go through the whole CSV file before updating the weights using the
+accumulated error.
+
+==== Learning technique
+
+Fixed learning rate (that you can still adjust manually as the simulation
+unfold), automatic learning rate (same as fixed but the rate is adjusted
+automatically when the error fluctuates), individual learning rate (same as
+automatic but each neuron has its own learning rate)
+
+==== Momentum
+
+The momentum to use when updating the weights.
+
+=== Running the simulation
 
 Each time you press the +Step+ button a random line will be chosen in the CSV
 and new inputs extracted from it and copied onto the corresponding input
 neurons output (normalizing the values). Then each hidden and output neuron
 outputs will be computed and the network output will be compared to the
-actual CSV value for that field. The neural network weights will then be
-adjusted to minimize the error according to the +learning speed+ setting.
+actual CSV value for that field. If that line was in the training set the error
+is computed and accumulated. At the end of the mini-batch the weights will also be
+adjusted to minimize the error according to the learning technique.
 
 If you press the +Start+ button the above process will be executed in a tight
 loop until you press the +Stop+ button.
