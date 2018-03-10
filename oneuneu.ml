@@ -172,11 +172,10 @@ struct
     let color = C.rand C.one in
     rect color ~x ~y ~width ~height
 
-  let text ?on_click text ~x ~y ~width ~height =
+  let text ?on_click ?(color=C.black) text ~x ~y ~width ~height =
     (* TODO: clip text by width/height. shape.bbox should be a clip_box (with a flag to tell when clip is not necessary?) *)
     ignore width ; ignore height ;
     let position = pi x y in
-    let color = C.black in
     let size = float_of_int Layout.text_line_height in
     Ogli_render.shape_of_text ~move_to_lower_left:true ?on_click color size text position []
 
@@ -494,7 +493,7 @@ struct
           ) ^" naïve="^ f2s (err_ratio naive_err set_size))) in
       group [
         Ogli_render.shape_of_polys (List.map (fun p -> color, [ p ]) polys) Point.origin [] ;
-        Widget.text title ~x:(x_of_line start) ~y:(y + height - (set_num + 1) * Layout.text_line_height) ~width ~height:Layout.text_line_height ]
+        Widget.text title ~x ~y:(y + height - (set_num + 1) * Layout.text_line_height) ~color ~width ~height:Layout.text_line_height ]
     in
     group [
       partial_graph min_line (Array.length csv.lines - test_set_sz) (c 0.7 0.7 0.7) "train" 1 ;
