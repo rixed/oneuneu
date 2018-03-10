@@ -1720,11 +1720,11 @@ struct
 
   let save_info oc =
     make () |>
-    PPP.to_string t_ppp |>
+    PPP.to_string t_ppp_json |>
     Printf.fprintf oc "%s\n"
 
   let load_info ic =
-    let t = BatIO.read_all ic |> PPP.of_string_exc t_ppp in
+    let t = BatIO.read_all ic |> PPP.of_string_exc t_ppp_json in
     IO.id_seq := t.io_id_seq ;
     Neuron.id_seq := t.neuron_id_seq ;
     Simulation.nb_steps := t.nb_steps ;

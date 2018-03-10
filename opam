@@ -13,5 +13,5 @@ depends: [
   "ocamlfind" {build}
   "batteries" {build}
   "ogli" {build}
-  "ppp" {build}
+  "ppp" {build & >= "2.1" }
 ]
