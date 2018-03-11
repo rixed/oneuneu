@@ -1482,9 +1482,9 @@ struct
     Param.on_update io.avg (precomp io) ;
     io
 
-  let make () =
+  let make col lag avg =
     incr id_seq ;
-    make_ !id_seq 0 0 0
+    make_ !id_seq col lag avg
 
   (* Avoid functionals in the serialization: *)
   type serialized_io =
@@ -1494,16 +1494,48 @@ struct
   let unserialize s =
     make_ s.ser_id s.ser_col s.ser_lag s.ser_avg
 
-  let render_io_adder what ios_param ~x ~y ~width ~height =
-    let on_click _ _ = Param.cons ios_param (make ()) in
-    Widget.button ("Add a new "^ what) ~on_click ~x ~y:(y + height - Layout.text_line_height) ~width ~height:Layout.text_line_height
+  let ramp_how_many = Param.make "how many inputs to add" 1
+  let ramp_field = Param.make "what field to add" 0
+  let ramp_lag = Param.make "ramp initial lag" 0
+  let ramp_avg = Param.make "what avg to add" 0
 
-  let render_all title ios_param io_width ~x ~y ~width ~height =
+  let render_input_ramp_adder ~x ~y ~width ~height =
+    (* Alternative: Select how many io to add, the field, and an avg, and have
+     * a button labelled "ramp" to create that many lagged ios *)
+    let y1 = y + height - 1 * Layout.text_line_height in
+    let y2 = y1 - Layout.text_line_height in
+    let lab_width = 40 and int_sel_width = 40 in
+    let on_click _ _ =
+      let ins =
+        List.unfold (0, ramp_lag.value) (fun (i, lag) ->
+          if i >= ramp_how_many.value then None else
+          let inp = make ramp_field.value lag ramp_avg.value in
+          Some (inp, (i+1, lag + 1 + ramp_avg.value))) in
+      Param.set inputs (inputs.value @ ins)in
+    group [
+      Widget.text "Add:" ~x ~y:y1 ~width:lab_width ~height:Layout.text_line_height ;
+      Widget.int_select ramp_how_many ~min:1 ~x:(x + lab_width) ~y:y1 ~width:int_sel_width ~height:Layout.text_line_height ;
+      Widget.simple_select csv_fields ramp_field ~x:(x + lab_width + int_sel_width) ~y:y1 ~width:(width - int_sel_width - 2*lab_width) ~height:Layout.text_line_height ;
+
+      Widget.text "Lag:" ~x ~y:y2 ~width:lab_width ~height:Layout.text_line_height ;
+      Widget.int_select ramp_lag ~min:0 ~x:(x + lab_width) ~y:y2 ~width:int_sel_width ~height:Layout.text_line_height ;
+      Widget.text "Avg:" ~x:(x + lab_width + int_sel_width) ~y:y2 ~width:lab_width ~height:Layout.text_line_height ;
+      Widget.int_select ramp_avg ~min:0 ~x:(x + lab_width + int_sel_width + lab_width) ~y:y2 ~width:int_sel_width ~height:Layout.text_line_height ;
+      Widget.button "Ramp" ~x:(x + width - lab_width) ~y:y2 ~width:lab_width ~height:Layout.text_line_height ~on_click ]
+
+  let render_io_adder what ios_param ~x ~y ~width ~height =
+    let on_click _ _ = Param.cons ios_param (make 0 0 0) in
+    Widget.button ("Add a single "^ what) ~on_click ~x ~y:(y + height - Layout.text_line_height) ~width ~height:Layout.text_line_height
+
+  let render_all title ios_param io_width with_ramp ~x ~y ~width ~height =
     ignore width ;
     (* Draw the input adder on the control column: *)
     fun_of Layout.control_column_width (fun control_width ->
       [ (* The input adder: *)
-        render_io_adder title ios_param ~x ~y ~width:control_width ~height ;
+        render_io_adder title ios_param ~x ~y:(y + height - Layout.text_line_height) ~width:control_width ~height:Layout.text_line_height ;
+        (if with_ramp then
+          render_input_ramp_adder ~x ~y:(y + height - 2 * Layout.text_line_height) ~width:control_width ~height:Layout.text_line_height
+        else group []) ;
         fun_of ios_param (fun ios ->
           (* We want to display them from oldest to newest: *)
           sort_io ios |>
@@ -1513,6 +1545,14 @@ struct
             in
             x + io_width, child :: children) (x + control_width, []) |>
           snd)])
+
+  let render_inputs ~x ~y ~width ~height =
+    fun_of Layout.input_width (fun input_width -> [
+      render_all "Input" inputs input_width true ~x ~y ~width ~height ])
+
+  let render_outputs ~x ~y ~width ~height =
+    fun_of Layout.output_width (fun output_width -> [
+      render_all "Output" outputs output_width false ~x ~y ~width ~height ])
 end
 
 module Simulation =
@@ -1952,15 +1992,13 @@ let dataviz_layout =
     fun_of Layout.screen_height (fun screen_h -> [
       background screen_w screen_h ;
       background_selection ;
-      fun_of Layout.input_width (fun input_width -> [
-        IO.render_all "Input" inputs input_width ~x:0 ~y:(screen_h - Layout.inputs_height) ~width:screen_w ~height:Layout.inputs_height ]) ;
+      IO.render_inputs ~x:0 ~y:(screen_h - Layout.inputs_height) ~width:screen_w ~height:Layout.inputs_height ;
       fun_of Layout.neural_net_height (fun neural_net_height -> [
         Neuron.render_all ~x:0 ~y:(screen_h - (Layout.inputs_height + neural_net_height)) ~width:screen_w ~height:neural_net_height ;
         fun_of Layout.outputs_height (fun outputs_height -> [
-          fun_of Layout.output_width (fun output_width -> [
-            IO.render_all "Output" outputs output_width ~x:0 ~y:(screen_h - (Layout.inputs_height + neural_net_height + outputs_height)) ~width:screen_w ~height:outputs_height ;
-            fun_of Layout.result_height (fun result_height -> [
-              render_results ~x:0 ~y:0 ~width:screen_w ~height:result_height ])])])])])])
+          IO.render_outputs ~x:0 ~y:(screen_h - (Layout.inputs_height + neural_net_height + outputs_height)) ~width:screen_w ~height:outputs_height ;
+          fun_of Layout.result_height (fun result_height -> [
+            render_results ~x:0 ~y:0 ~width:screen_w ~height:result_height ])])])])])
 
 let () =
   let width = 800 and height = 600 in
