@@ -123,10 +123,10 @@ struct
   let details_height = Param.make "neuron details height" 200
   let outputs_height = Param.make "outputs height" 50
   let output_width = Param.make "output width" 130
-  let result_height = Param.make "result height" (8 * text_line_height)
+  let result_height = Param.make "result height" (9 * text_line_height)
 
   (* We have a control-column on the left with various widgets: *)
-  let control_column_width = Param.make "controls width" 200
+  let control_column_width = Param.make "controls width" 250
 
   (* TODO add visibility flags for each components in the layout so that we can
    * disable some display when screen becomes too small *)
@@ -427,6 +427,8 @@ struct
     let idx = Lr44.pos_mod (csv.idx - lag) (Array.length csv.lines) in
     csv.predictions.(idx).(col) <- Some v
 
+  let naive_lag = Param.make "lag for naive predictor" 1
+
   let render ~col csv test_set_sz min_line ~x ~y ~width ~height =
     (* Draw a simple bar for each prediction/value. When we have several
      * values per pixel draw the bounding box. *)
@@ -445,8 +447,8 @@ struct
     let rec loop naive_err tot_err skipped polys last_x y_lims limit line =
       if line >= limit then naive_err, tot_err, skipped, polys else
       let naive_err =
-        if line = 0 then naive_err else
-          naive_err +. abs_float (csv.lines.(line).(col) -. csv.lines.(line-1).(col)) in
+        if line < naive_lag.value then naive_err else
+          naive_err +. abs_float (csv.lines.(line).(col) -. csv.lines.(line-naive_lag.value).(col)) in
       match csv.predictions.(line).(col) with
       | None ->
           (* Just skip *)
@@ -1859,7 +1861,9 @@ let render_result_controls ~x ~y ~width ~height =
         fun_of Simulation.auto_learn_rate (fun rate -> [
           Widget.text (f2s rate) ~x:(x + label_w) ~y:(y + height - 7 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ]) ]) ;
   Widget.text "Momentum:" ~x ~y:(y + height - 8 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
-  Widget.simple_select momentum_options Simulation.momentum ~x:(x + label_w) ~y:(y + height - 8 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ]
+  Widget.simple_select momentum_options Simulation.momentum ~x:(x + label_w) ~y:(y + height - 8 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ;
+  Widget.text "Naïve Lag:" ~x ~y:(y + height - 9 * Layout.text_line_height) ~width:label_w ~height:Layout.text_line_height ;
+  Widget.int_select CSV.naive_lag ~min:1 ~x:(x + label_w) ~y:(y + height - 9 * Layout.text_line_height) ~width:(width - label_w) ~height:Layout.text_line_height ]
 
 let render_results ~x ~y ~width ~height =
   fun_of Layout.control_column_width (fun control_width -> [
