@@ -488,7 +488,7 @@ struct
         let set_size = stop - start in
         if set_size = 0 then "empty set" else (
           ( (* Wait before we have visited at least half the data before recording min error: *)
-            if skipped > Array.length csv.lines / 2 then "" else
+            if skipped > Array.length csv.lines / 5 then "" else
               let e = err_ratio tot_err (set_size - skipped) in
               if e < csv.min_tot_err.(set_num) then csv.min_tot_err.(set_num) <- e ;
               "err="^ f2s e ^" min="^ f2s csv.min_tot_err.(set_num)
